@@ -14,6 +14,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ClaudeStreamOptions, SSEEvent, TokenUsage, MCPServerConfig, PermissionRequestEvent } from '@/types';
 import { registerPendingPermission } from './permission-registry';
+import { getSetting } from './db';
 import { execFileSync } from 'child_process';
 import os from 'os';
 import path from 'path';
@@ -132,15 +133,26 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
   return new ReadableStream<string>({
     async start(controller) {
       try {
+        // Build env for the Claude Code subprocess.
+        // Start with process.env (includes user shell env from Electron's loadUserShellEnv).
+        // Then overlay any API config the user set in CodePilot settings (optional).
+        const sdkEnv: Record<string, string> = { ...process.env as Record<string, string> };
+
+        const appToken = getSetting('anthropic_auth_token');
+        const appBaseUrl = getSetting('anthropic_base_url');
+        if (appToken) {
+          sdkEnv.ANTHROPIC_AUTH_TOKEN = appToken;
+        }
+        if (appBaseUrl) {
+          sdkEnv.ANTHROPIC_BASE_URL = appBaseUrl;
+        }
+
         const queryOptions: Options = {
           cwd: workingDirectory || process.cwd(),
           abortController,
           includePartialMessages: true,
           permissionMode: (permissionMode as Options['permissionMode']) || 'acceptEdits',
-          // Explicitly pass the full process.env to the Claude Code subprocess.
-          // In packaged Electron, this includes user shell env vars (API keys, etc.)
-          // loaded by the main process via loadUserShellEnv().
-          env: process.env as Record<string, string>,
+          env: sdkEnv,
         };
 
         // Find claude binary for packaged app where PATH is limited
