@@ -2,8 +2,8 @@
 
 **Claude Code 的原生桌面 GUI** — 通过可视化界面与 Claude 对话、编程、管理项目，而不是使用终端。
 
-[![GitHub release](https://img.shields.io/github/v/release/op7418/CodePilot)](https://github.com/op7418/CodePilot/releases)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)](https://github.com/op7418/CodePilot/releases)
+[![GitHub release](https://img.shields.io/github/v/release/Marvinngg/ClaudeCodeGUI)](https://github.com/Marvinngg/ClaudeCodeGUI/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)](https://github.com/Marvinngg/ClaudeCodeGUI/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](./README_EN.md)
