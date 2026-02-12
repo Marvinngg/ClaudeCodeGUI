@@ -71,7 +71,7 @@ CodePilot 内置了私域 Hub 支持，启动应用时会自动运行本地 Hub 
 
 ### Hub 管理后台
 
-Hub 服务自带 Web 管理界面，管理员可通过浏览器直接管理 Skills 和对话数据（默认地址：`http://localhost:2999/admin`）。
+Hub 服务自带 Web 管理界面，管理员可通过浏览器直接管理 Skills 和对话数据（默认地址：`http://localhost:3100/`）。
 
 <!--
 【截图说明】
