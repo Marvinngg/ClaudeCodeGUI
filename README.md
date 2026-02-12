@@ -18,63 +18,55 @@
 - 不自己实现 AI 功能，只做界面层的封装和优化
 - 保持与官方 CLI 的行为一致，确保稳定性和可维护性
 
-<!-- 主界面截图：展示整体 UI 布局（左侧导航、中间聊天、右侧文件树） -->
+<!--
+【截图说明】
+请将截图文件放入 docs/ 目录，命名如下：
+1. screenshot-main.png : 主界面全景（展示左侧导航、中间聊天、右侧文件树）
+-->
 ![主界面](docs/screenshot-main.png)
 
 ---
 
 ## 快速开始
 
-### 1. 安装依赖
+### 1. 获取代码与安装依赖
 
 ```bash
+# 克隆仓库
+git clone https://github.com/Marvinngg/ClaudeCodeGUI.git
+cd ClaudeCodeGUI
+
+# 安装主程序依赖
 npm install
+
+# 安装 Hub 服务依赖
+cd hub
+npm install
+cd ..
 ```
 
-### 2. 启动应用
+### 2. 启动应用 (macOS)
+
+此命令会同时启动 Next.js 前端、Electron 主进程以及本地 Hub 服务。
 
 ```bash
-# 启动 Electron 桌面应用（包含 Hub 服务）
 npm run electron:dev:hub
-
-# 或仅启动浏览器版本
-npm run dev
 ```
-
-### 3. 配置 API Key
-
-首次启动后，在 Settings 页面配置 Anthropic API Key，或设置环境变量 `ANTHROPIC_API_KEY`。
 
 ---
 
 ## 私域部署
 
-CodePilot 支持私域 Hub，用于团队内部分享 Skills 和对话总结：
+CodePilot 内置了私域 Hub 支持，启动应用时会自动运行本地 Hub 服务。
 
-**启动私域 Hub 服务器：**
+团队成员可以在 **Settings → Hub Settings** 中配置统一的 Hub URL（例如部署在内网服务器上的地址），用于分享和同步 Skills 及对话总结。
 
-```bash
-cd hub
-node server.js
-```
-
-默认运行在 `http://localhost:2999`，可通过以下环境变量配置：
-
-- `PORT` — 服务端口（默认 2999）
-- `DB_PATH` — 数据库路径（默认 `./data/hub.db`）
-
-**客户端配置：**
-
-在 Settings → Hub Settings 中配置：
-- **Hub URL**: `http://your-hub-server:2999`
-- **User Identifier**: 团队内唯一标识（用于标记分享来源）
-
-配置完成后，可在 Extensions 页面查看 Hub 中的 Skills 和对话，并安装到本地使用。
-
-<!-- Hub 配置截图：展示 Settings → Hub Settings 配置界面 -->
+<!--
+【截图说明】
+2. screenshot-hub-settings.png : Settings -> Hub Settings 界面
+3. screenshot-hub-manager.png : Extensions -> Hub 页面
+-->
 ![Hub 配置](docs/screenshot-hub-settings.png)
-
-<!-- Hub 管理截图：展示 Extensions → Hub 页面的 Skills 和 Conversations 列表 -->
 ![Hub 管理](docs/screenshot-hub-manager.png)
 
 ---
@@ -89,7 +81,10 @@ CodePilot 支持三种对话模式：
 - **Plan** — 只分析和规划，不执行操作
 - **Ask** — 纯问答模式
 
-<!-- 模式切换截图：展示输入框左侧的模式选择器 -->
+<!--
+【截图说明】
+4. screenshot-mode-selector.png : 输入框左侧的模式选择下拉菜单
+-->
 ![模式切换](docs/screenshot-mode-selector.png)
 
 ### Skills 管理
@@ -97,7 +92,10 @@ CodePilot 支持三种对话模式：
 - **本地 Skills**: 在 Extensions → Skills 中创建和管理，支持全局或项目级作用域
 - **Hub Skills**: 从 Hub 安装团队共享的 Skills，一键添加到本地
 
-<!-- Skills 管理截图：展示 Extensions → Skills 页面 -->
+<!--
+【截图说明】
+5. screenshot-skills.png : Extensions -> Skills 页面
+-->
 ![Skills 管理](docs/screenshot-skills.png)
 
 ### 对话总结与分享
@@ -106,7 +104,10 @@ CodePilot 支持三种对话模式：
 - 总结包含原始对话记录，可上传到 Hub 分享给团队
 - 从 Hub 安装对话后，可在本地继续聊天
 
-<!-- 对话总结截图：展示 Extensions → Conversations 页面 -->
+<!--
+【截图说明】
+6. screenshot-conversations.png : Extensions -> Conversations 页面
+-->
 ![对话总结](docs/screenshot-conversations.png)
 
 ### 导入 CLI 会话
@@ -116,15 +117,11 @@ CodePilot 支持三种对话模式：
 - 点击 Chat 侧边栏的 "Import CLI Session" 按钮
 - 选择要导入的会话，历史记录完整保留
 
-<!-- 导入会话截图：展示导入 CLI 会话对话框 -->
+<!--
+【截图说明】
+7. screenshot-import.png : 导入 CLI 会话的弹窗界面
+-->
 ![导入会话](docs/screenshot-import.png)
-
-### 多语言支持
-
-点击左下角语言切换按钮（中/EN），在中英文界面间切换。
-
-<!-- 语言切换截图：展示左下角的语言切换按钮 -->
-![语言切换](docs/screenshot-language.png)
 
 ---
 
@@ -138,14 +135,6 @@ CodePilot 支持三种对话模式：
 | 数据库 | better-sqlite3 (本地嵌入式) |
 | Markdown | react-markdown + Shiki (语法高亮) |
 | 图标 | Hugeicons + Lucide |
-
----
-
-## 下载
-
-预编译版本见 [Releases](https://github.com/op7418/CodePilot/releases) 页面，支持 macOS (arm64/x64) 和 Windows (x64)。
-
-**macOS 安装提示：** 首次打开时，右键点击 → "打开"，或前往 系统设置 → 隐私与安全性 → 点击 "仍要打开"。
 
 ---
 
