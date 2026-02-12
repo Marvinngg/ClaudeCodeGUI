@@ -9,6 +9,10 @@ import { getSetting, setSetting } from '@/lib/db';
 const ALLOWED_KEYS = [
   'anthropic_auth_token',
   'anthropic_base_url',
+  // Hub settings
+  'hub_url',
+  'hub_user_id',
+  'hub_sync_interval',
 ];
 
 export async function GET() {

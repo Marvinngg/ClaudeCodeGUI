@@ -1,7 +1,7 @@
 "use client";
 
 import { HugeiconsIcon } from "@hugeicons/react";
-import { ZapIcon, Delete02Icon, GlobeIcon, FolderOpenIcon, Plug01Icon, Download04Icon } from "@hugeicons/core-free-icons";
+import { ZapIcon, Delete02Icon, GlobeIcon, FolderOpenIcon, Plug01Icon, Download04Icon, CloudUploadIcon } from "@hugeicons/core-free-icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,16 +16,17 @@ export interface SkillItem {
   name: string;
   description: string;
   content: string;
-  source: "global" | "project" | "plugin" | "installed";
-  installedSource?: "agents" | "claude";
+  source: "global" | "project" | "plugin" | "hub";
   filePath: string;
+  publisher?: string; // For hub skills
 }
 
 interface SkillListItemProps {
   skill: SkillItem;
   selected: boolean;
   onSelect: () => void;
-  onDelete: (skill: SkillItem) => void;
+  onDelete?: (skill: SkillItem) => void; // Optional - hub skills should not have delete
+  onPublish?: (skill: SkillItem) => void;
 }
 
 export function SkillListItem({
@@ -33,12 +34,14 @@ export function SkillListItem({
   selected,
   onSelect,
   onDelete,
+  onPublish,
 }: SkillListItemProps) {
   const [hovered, setHovered] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!onDelete) return; // No delete handler provided
     if (confirmDelete) {
       onDelete(skill);
       setConfirmDelete(false);
@@ -46,6 +49,13 @@ export function SkillListItem({
       setConfirmDelete(true);
       // Auto-reset after 3 seconds
       setTimeout(() => setConfirmDelete(false), 3000);
+    }
+  };
+
+  const handlePublish = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onPublish) {
+      onPublish(skill);
     }
   };
 
@@ -74,25 +84,24 @@ export function SkillListItem({
               "text-[10px] px-1.5 py-0",
               skill.source === "global"
                 ? "border-green-500/40 text-green-600 dark:text-green-400"
-                : skill.source === "installed"
-                  ? "border-orange-500/40 text-orange-600 dark:text-orange-400"
-                  : skill.source === "plugin"
-                    ? "border-purple-500/40 text-purple-600 dark:text-purple-400"
+                : skill.source === "plugin"
+                  ? "border-purple-500/40 text-purple-600 dark:text-purple-400"
+                  : skill.source === "hub"
+                    ? "border-cyan-500/40 text-cyan-600 dark:text-cyan-400"
                     : "border-blue-500/40 text-blue-600 dark:text-blue-400"
             )}
           >
             {skill.source === "global" ? (
               <HugeiconsIcon icon={GlobeIcon} className="h-2.5 w-2.5 mr-0.5" />
-            ) : skill.source === "installed" ? (
-              <HugeiconsIcon icon={Download04Icon} className="h-2.5 w-2.5 mr-0.5" />
             ) : skill.source === "plugin" ? (
               <HugeiconsIcon icon={Plug01Icon} className="h-2.5 w-2.5 mr-0.5" />
+            ) : skill.source === "hub" ? (
+              <HugeiconsIcon icon={CloudUploadIcon} className="h-2.5 w-2.5 mr-0.5" />
             ) : (
               <HugeiconsIcon icon={FolderOpenIcon} className="h-2.5 w-2.5 mr-0.5" />
             )}
-            {skill.source === "installed" && skill.installedSource
-              ? `installed:${skill.installedSource}`
-              : skill.source}
+            {/* ✅ Hub skills 显示 publisher，其他显示 source */}
+            {skill.source === "hub" && skill.publisher ? skill.publisher : skill.source}
           </Badge>
         </div>
         <p className="text-xs text-muted-foreground truncate">
@@ -100,21 +109,41 @@ export function SkillListItem({
         </p>
       </div>
       {(hovered || confirmDelete) && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={confirmDelete ? "destructive" : "ghost"}
-              size="icon-xs"
-              className="shrink-0"
-              onClick={handleDelete}
-            >
-              <HugeiconsIcon icon={Delete02Icon} className="h-3 w-3" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">
-            {confirmDelete ? "Click again to confirm" : "Delete"}
-          </TooltipContent>
-        </Tooltip>
+        <div className="flex items-center gap-1">
+          {onPublish && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="shrink-0"
+                  onClick={handlePublish}
+                >
+                  <HugeiconsIcon icon={CloudUploadIcon} className="h-3 w-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Publish to Hub</TooltipContent>
+            </Tooltip>
+          )}
+          {/* ✅ 只有提供了 onDelete 才显示删除按钮 (hub skills 不提供) */}
+          {onDelete && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={confirmDelete ? "destructive" : "ghost"}
+                  size="icon-xs"
+                  className="shrink-0"
+                  onClick={handleDelete}
+                >
+                  <HugeiconsIcon icon={Delete02Icon} className="h-3 w-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                {confirmDelete ? "Click again to confirm" : "Delete"}
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </div>
       )}
     </div>
   );

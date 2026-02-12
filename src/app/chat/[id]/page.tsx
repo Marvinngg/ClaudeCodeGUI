@@ -19,18 +19,20 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const [sessionTitle, setSessionTitle] = useState<string>('');
   const [sessionModel, setSessionModel] = useState<string>('');
   const [sessionMode, setSessionMode] = useState<string>('');
-  const { setWorkingDirectory, setSessionId, setSessionTitle: setPanelSessionTitle, setPanelOpen } = usePanel();
+  const { setSessionId, setSessionTitle: setPanelSessionTitle, setPanelOpen, setWorkingDirectory: setGlobalWorkingDirectory } = usePanel();
+  const [sessionWorkingDir, setSessionWorkingDir] = useState<string>('');
 
-  // Load session info and set working directory
+  // 🔧 Load session info - 只设置当前 session 的工作目录，不污染全局状态
   useEffect(() => {
     async function loadSession() {
       try {
         const res = await fetch(`/api/chat/sessions/${id}`);
         if (res.ok) {
           const data: { session: ChatSession } = await res.json();
-          if (data.session.working_directory) {
-            setWorkingDirectory(data.session.working_directory);
-          }
+          // 🔧 设置本地 state，同时同步到全局供 RightPanel 显示
+          const wd = data.session.working_directory || '';
+          setSessionWorkingDir(wd);
+          setGlobalWorkingDirectory(wd);
           setSessionId(id);
           setPanelOpen(true);
           const title = data.session.title || 'New Conversation';
@@ -45,7 +47,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     }
 
     loadSession();
-  }, [id, setWorkingDirectory, setSessionId, setPanelSessionTitle, setPanelOpen]);
+  }, [id, setSessionId, setPanelSessionTitle, setPanelOpen, setGlobalWorkingDirectory]);
 
   useEffect(() => {
     // Reset state when switching sessions
@@ -116,7 +118,14 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           </h2>
         </div>
       )}
-      <ChatView key={id} sessionId={id} initialMessages={messages} modelName={sessionModel} initialMode={sessionMode} />
+      <ChatView
+        key={id}
+        sessionId={id}
+        initialMessages={messages}
+        modelName={sessionModel}
+        initialMode={sessionMode}
+        initialWorkingDirectory={sessionWorkingDir}
+      />
     </div>
   );
 }

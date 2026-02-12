@@ -13,7 +13,7 @@ export interface ChatSession {
   sdk_session_id: string; // Claude Agent SDK session ID for resume
   project_name: string;
   status: 'active' | 'archived';
-  mode?: 'code' | 'plan' | 'ask';
+  mode?: 'code' | 'plan' | 'ask' | 'teams';
   needs_approval?: boolean;
 }
 
@@ -107,6 +107,8 @@ export interface ApiProvider {
   sort_order: number;
   extra_env: string; // JSON string of Record<string, string>
   notes: string;
+  source: string; // 'local' | 'hub' — where this provider was configured
+  default_model?: string; // Optional default model ID for this provider
   created_at: string;
   updated_at: string;
 }
@@ -118,6 +120,7 @@ export interface CreateProviderRequest {
   api_key?: string;
   extra_env?: string;
   notes?: string;
+  default_model?: string;
 }
 
 export interface UpdateProviderRequest {
@@ -128,6 +131,7 @@ export interface UpdateProviderRequest {
   extra_env?: string;
   notes?: string;
   sort_order?: number;
+  default_model?: string;
 }
 
 export interface ProvidersResponse {
@@ -309,6 +313,8 @@ export type SSEEventType =
   | 'result'             // final result with usage stats
   | 'error'              // error occurred
   | 'permission_request' // permission approval needed
+  | 'task_notification'  // agent team task completed/failed/stopped
+  | 'tool_use_summary'   // agent team tool use summary
   | 'done';              // stream complete
 
 export interface SSEEvent {
@@ -431,4 +437,5 @@ export interface ClaudeStreamOptions {
   abortController?: AbortController;
   permissionMode?: string;
   files?: FileAttachment[];
+  enableAgentTeams?: boolean; // Enable experimental Agent Teams feature
 }

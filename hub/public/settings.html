@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Settings - CodePilot Hub</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+    .settings-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+    }
+    .input-field {
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+    }
+    .input-field:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div class="container mx-auto px-4 py-8 max-w-4xl">
+    <!-- Header -->
+    <header class="mb-8">
+      <div class="flex items-center gap-4 mb-4">
+        <a href="/index.html" class="text-gray-400 hover:text-white transition">
+          ← Back to Resources
+        </a>
+      </div>
+      <h1 class="text-4xl font-bold text-blue-400 mb-2">Settings</h1>
+      <p class="text-gray-400">Configure CodePilot Hub settings</p>
+    </header>
+
+    <!-- Settings Form -->
+    <div class="settings-card rounded-lg p-6">
+      <h2 class="text-2xl font-semibold mb-6">API Configuration</h2>
+
+      <div class="mb-6">
+        <label for="api-key" class="block text-sm font-medium mb-2">
+          Anthropic API Key
+        </label>
+        <input
+          type="password"
+          id="api-key"
+          class="input-field w-full px-4 py-2 rounded-lg"
+          placeholder="sk-ant-..."
+        />
+        <p class="text-gray-500 text-sm mt-2">
+          Optional: Configure API key for future features (e.g., AI-powered search, resource recommendations)
+        </p>
+      </div>
+
+      <div class="mb-6">
+        <label for="hub-url" class="block text-sm font-medium mb-2">
+          Hub URL
+        </label>
+        <input
+          type="text"
+          id="hub-url"
+          class="input-field w-full px-4 py-2 rounded-lg"
+          value="http://localhost:3100"
+          readonly
+        />
+        <p class="text-gray-500 text-sm mt-2">
+          Current Hub server address
+        </p>
+      </div>
+
+      <!-- Status Message -->
+      <div id="status-message" class="hidden mb-4 p-4 rounded-lg"></div>
+
+      <!-- Action Buttons -->
+      <div class="flex gap-3">
+        <button
+          id="save-btn"
+          class="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition font-medium"
+        >
+          Save Settings
+        </button>
+        <button
+          id="test-btn"
+          class="px-6 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg transition font-medium"
+        >
+          Test Connection
+        </button>
+      </div>
+    </div>
+
+    <!-- System Info -->
+    <div class="settings-card rounded-lg p-6 mt-6">
+      <h2 class="text-2xl font-semibold mb-4">System Information</h2>
+
+      <div class="grid grid-cols-2 gap-4 text-sm">
+        <div>
+          <p class="text-gray-500">Hub Version</p>
+          <p id="hub-version" class="font-mono">Loading...</p>
+        </div>
+        <div>
+          <p class="text-gray-500">Total Resources</p>
+          <p id="total-resources" class="font-mono">Loading...</p>
+        </div>
+        <div class="col-span-2">
+          <p class="text-gray-500">Data Directory</p>
+          <p class="font-mono text-xs break-all">./hub/data/hub.db</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://localhost:3100/api';
+
+    // Load settings
+    async function loadSettings() {
+      try {
+        const response = await fetch(`${API_BASE}/settings`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.anthropic_api_key) {
+            document.getElementById('api-key').value = data.anthropic_api_key;
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load settings:', error);
+      }
+    }
+
+    // Load system info
+    async function loadSystemInfo() {
+      try {
+        // Get health info
+        const healthRes = await fetch(`${API_BASE}/health`);
+        const health = await healthRes.json();
+        document.getElementById('hub-version').textContent = health.version || 'Unknown';
+
+        // Get resource counts
+        const [skillsRes, templatesRes, promptsRes] = await Promise.all([
+          fetch(`${API_BASE}/shared/skills`),
+          fetch(`${API_BASE}/shared/templates`),
+          fetch(`${API_BASE}/shared/prompts`)
+        ]);
+
+        const skills = await skillsRes.json();
+        const templates = await templatesRes.json();
+        const prompts = await promptsRes.json();
+
+        const total = skills.length + templates.length + prompts.length;
+        document.getElementById('total-resources').textContent = `${total} (${skills.length} skills, ${templates.length} templates, ${prompts.length} prompts)`;
+      } catch (error) {
+        console.error('Failed to load system info:', error);
+        document.getElementById('hub-version').textContent = 'Error';
+        document.getElementById('total-resources').textContent = 'Error';
+      }
+    }
+
+    // Show status message
+    function showStatus(message, isError = false) {
+      const statusEl = document.getElementById('status-message');
+      statusEl.textContent = message;
+      statusEl.className = `p-4 rounded-lg ${isError ? 'bg-red-900/50 text-red-300' : 'bg-green-900/50 text-green-300'}`;
+      statusEl.classList.remove('hidden');
+
+      setTimeout(() => {
+        statusEl.classList.add('hidden');
+      }, 3000);
+    }
+
+    // Save settings
+    document.getElementById('save-btn').addEventListener('click', async () => {
+      const apiKey = document.getElementById('api-key').value.trim();
+
+      try {
+        const response = await fetch(`${API_BASE}/settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ anthropic_api_key: apiKey })
+        });
+
+        if (response.ok) {
+          showStatus('Settings saved successfully');
+        } else {
+          showStatus('Failed to save settings', true);
+        }
+      } catch (error) {
+        console.error('Save failed:', error);
+        showStatus('Failed to save settings', true);
+      }
+    });
+
+    // Test connection
+    document.getElementById('test-btn').addEventListener('click', async () => {
+      try {
+        const response = await fetch(`${API_BASE}/health`);
+        if (response.ok) {
+          const data = await response.json();
+          showStatus(`Connection successful! Hub v${data.version} is running`);
+        } else {
+          showStatus('Connection failed', true);
+        }
+      } catch (error) {
+        console.error('Test failed:', error);
+        showStatus('Connection failed: Hub server is not running', true);
+      }
+    });
+
+    // Initial load
+    loadSettings();
+    loadSystemInfo();
+  </script>
+</body>
+</html>

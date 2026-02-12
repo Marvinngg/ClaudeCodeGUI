@@ -9,7 +9,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       attribute="class"
       defaultTheme="system"
       enableSystem
-      disableTransitionOnChange
+      storageKey="codepilot-theme"
+      // 🔧 移除 disableTransitionOnChange，确保主题切换生效
     >
       {children}
     </NextThemesProvider>

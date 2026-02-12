@@ -1,8 +1,11 @@
-import type { Metadata } from "next";
+"use client";
+
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/layout/ThemeProvider";
+import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AppShell } from "@/components/layout/AppShell";
+// import { ClientInit } from "@/components/ClientInit"; // Temporarily disabled to fix SSR issue
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,11 +17,6 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "CodePilot",
-  description: "A desktop GUI for Claude Code",
-};
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -27,11 +25,14 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
-        <ThemeProvider>
-          <AppShell>{children}</AppShell>
-        </ThemeProvider>
+        {/* <ClientInit /> - Temporarily disabled */}
+        <LanguageProvider>
+          <ThemeProvider>
+            <AppShell>{children}</AppShell>
+          </ThemeProvider>
+        </LanguageProvider>
       </body>
     </html>
   );

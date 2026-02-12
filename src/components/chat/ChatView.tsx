@@ -1,9 +1,11 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Message, SSEEvent, TokenUsage, PermissionRequestEvent, FileAttachment } from '@/types';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
+import { TeamDashboard } from './TeamDashboard';
+import { SummarizeButton } from './SummarizeButton';
 import { usePanel } from '@/hooks/usePanel';
 
 interface ToolUseInfo {
@@ -22,10 +24,13 @@ interface ChatViewProps {
   initialMessages?: Message[];
   modelName?: string;
   initialMode?: string;
+  initialWorkingDirectory?: string; // 🔧 新增：从 session 数据初始化工作目录
 }
 
-export function ChatView({ sessionId, initialMessages = [], modelName, initialMode }: ChatViewProps) {
-  const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId } = usePanel();
+export function ChatView({ sessionId, initialMessages = [], modelName, initialMode, initialWorkingDirectory = '' }: ChatViewProps) {
+  const { setStreamingSessionId, setPanelOpen, setPendingApprovalSessionId, setWorkingDirectory: setGlobalWorkingDirectory } = usePanel();
+  // 🔧 使用本地 state 管理工作目录，同步到全局供 RightPanel 显示
+  const [workingDirectory, setWorkingDirectoryLocal] = useState(initialWorkingDirectory);
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -33,10 +38,37 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>([]);
   const [statusText, setStatusText] = useState<string | undefined>();
   const [mode, setMode] = useState(initialMode || 'code');
-  const [currentModel, setCurrentModel] = useState(modelName || 'sonnet');
+  const [currentModel, setCurrentModel] = useState(modelName || '');
+
+  // 🔧 模型变更时保存到 localStorage，保持偏好一致
+
+  const handleModelChange = useCallback((newModel: string) => {
+    setCurrentModel(newModel);
+    try {
+      localStorage.setItem('last_model', newModel);
+    } catch (e) {
+      // ignore
+    }
+    // Persist to session DB
+    if (sessionId) {
+      fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: newModel }),
+      }).catch(() => { /* silent */ });
+    }
+  }, [sessionId]);
+
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
+  const [teamNotifications, setTeamNotifications] = useState<Array<{ task_id: string; status: string; summary: string }>>([]);
+  const [sdkSlashCommands, setSdkSlashCommands] = useState<string[]>([]);
+  const [sdkSkills, setSdkSkills] = useState<Array<{ name: string; description: string }>>([]);
+
+  // 🔧 使用 ref 来跟踪工具调用的实时值，避免闭包问题
+  const toolUsesRef = useRef<ToolUseInfo[]>([]);
+  const toolResultsRef = useRef<ToolResultInfo[]>([]);
 
   const handleModeChange = useCallback((newMode: string) => {
     setMode(newMode);
@@ -54,7 +86,8 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const handleWorkingDirectoryChange = useCallback((dir: string) => {
-    setWorkingDirectory(dir);
+    // 🔧 只更新本地状态和数据库，不影响全局状态
+    setWorkingDirectoryLocal(dir);
     setPanelOpen(true);
     // Persist to database
     if (sessionId) {
@@ -64,7 +97,7 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
         body: JSON.stringify({ working_directory: dir }),
       }).catch(() => { /* silent */ });
     }
-  }, [sessionId, setWorkingDirectory, setPanelOpen]);
+  }, [sessionId, setPanelOpen]);
 
   // Ref to keep accumulated streaming content in sync regardless of React batching
   const accumulatedRef = useRef('');
@@ -99,6 +132,11 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
       setMode(initialMode);
     }
   }, [initialMode]);
+
+  // 🔧 同步本地工作目录到全局 context，让 RightPanel 的 FileTree 跟随
+  useEffect(() => {
+    setGlobalWorkingDirectory(workingDirectory);
+  }, [workingDirectory, setGlobalWorkingDirectory]);
 
   const stopStreaming = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -167,7 +205,11 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
       accumulatedRef.current = '';
       setToolUses([]);
       setToolResults([]);
+      // 🔧 清空 ref
+      toolUsesRef.current = [];
+      toolResultsRef.current = [];
       setStatusText(undefined);
+      setTeamNotifications([]);
 
       const controller = new AbortController();
       abortControllerRef.current = controller;
@@ -175,18 +217,40 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
       let accumulated = '';
 
       try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        // 🔧 Teams 模式：使用持久 CLI 进程 API
+        let response: Response;
+        console.log(`[ChatView] sendMessage mode=${mode}, sessionId=${sessionId}`);
+        if (mode === 'teams') {
+          // Teams 模式：启动 CLI 进程
+          const params = new URLSearchParams({
             session_id: sessionId,
-            content,
-            mode,
-            model: currentModel,
-            ...(files && files.length > 0 ? { files } : {}),
-          }),
-          signal: controller.signal,
-        });
+            message: content,
+          });
+          // 只有用户实际设置了工作目录才传递，否则让服务端决定默认值
+          if (workingDirectory) {
+            params.set('working_directory', workingDirectory);
+          }
+          console.log(`[ChatView] Using teams API: /api/teams/ws`);
+          response = await fetch(`/api/teams/ws?${params.toString()}`, {
+            method: 'GET',
+            signal: controller.signal,
+          });
+        } else {
+          // Code/Ask/Plan 模式：使用原有 API
+          response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              session_id: sessionId,
+              content,
+              mode,
+              model: currentModel,
+              working_directory: workingDirectory, // 🔧 直接传递工作目录，不依赖数据库
+              ...(files && files.length > 0 ? { files } : {}),
+            }),
+            signal: controller.signal,
+          });
+        }
 
         if (!response.ok) {
           const err = await response.json();
@@ -231,11 +295,14 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
                     setToolUses((prev) => {
                       // Avoid duplicates
                       if (prev.some((t) => t.id === toolData.id)) return prev;
-                      return [...prev, {
+                      const newToolUses = [...prev, {
                         id: toolData.id,
                         name: toolData.name,
                         input: toolData.input,
                       }];
+                      // 🔧 同步更新 ref
+                      toolUsesRef.current = newToolUses;
+                      return newToolUses;
                     });
                   } catch {
                     // skip malformed tool_use data
@@ -247,10 +314,15 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
                   try {
                     const resultData = JSON.parse(event.data);
                     setStreamingToolOutput('');
-                    setToolResults((prev) => [...prev, {
-                      tool_use_id: resultData.tool_use_id,
-                      content: resultData.content,
-                    }]);
+                    setToolResults((prev) => {
+                      const newToolResults = [...prev, {
+                        tool_use_id: resultData.tool_use_id,
+                        content: resultData.content,
+                      }];
+                      // 🔧 同步更新 ref
+                      toolResultsRef.current = newToolResults;
+                      return newToolResults;
+                    });
                   } catch {
                     // skip malformed tool_result data
                   }
@@ -284,6 +356,14 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
                       // Init event — show briefly then clear so tool status can take over
                       setStatusText(`Connected (${statusData.model || 'claude'})`);
                       setTimeout(() => setStatusText(undefined), 2000);
+                      // Capture slash_commands and skills from SDK init for the input popover
+                      if (Array.isArray(statusData.slash_commands)) {
+                        setSdkSlashCommands(statusData.slash_commands);
+                      }
+                      // ✅ 捕获 SDK 返回的 skills 元数据（包含 name 和 description）
+                      if (Array.isArray(statusData.skills)) {
+                        setSdkSkills(statusData.skills);
+                      }
                     } else if (statusData.notification) {
                       // Notification from SDK hooks — show as progress
                       setStatusText(statusData.message || statusData.title || undefined);
@@ -321,6 +401,30 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
                   break;
                 }
 
+                case 'task_notification': {
+                  try {
+                    const notifData = JSON.parse(event.data);
+                    setTeamNotifications((prev) => [...prev, {
+                      task_id: notifData.task_id,
+                      status: notifData.status,
+                      summary: notifData.summary,
+                    }]);
+                  } catch {
+                    // skip malformed task_notification data
+                  }
+                  break;
+                }
+
+                case 'tool_use_summary': {
+                  try {
+                    const summaryData = JSON.parse(event.data);
+                    setStatusText(summaryData.summary || undefined);
+                  } catch {
+                    // skip malformed tool_use_summary data
+                  }
+                  break;
+                }
+
                 case 'error': {
                   accumulated += '\n\n**Error:** ' + event.data;
                   accumulatedRef.current = accumulated;
@@ -339,13 +443,47 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
           }
         }
 
-        // Add the assistant message to the list
-        if (accumulated.trim()) {
+        // Add the assistant message to the list with complete tool calls
+        // 🔧 使用 ref 中的最新值，避免闭包问题
+        const finalToolUses = toolUsesRef.current;
+        const finalToolResults = toolResultsRef.current;
+
+        if (accumulated.trim() || finalToolUses.length > 0) {
+          // Build complete content blocks (same format as database)
+          const contentBlocks: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: string; is_error?: boolean }> = [];
+
+          // Add all tool_use and tool_result blocks
+          for (const tool of finalToolUses) {
+            contentBlocks.push({
+              type: 'tool_use',
+              id: tool.id,
+              name: tool.name,
+              input: tool.input,
+            });
+            const result = finalToolResults.find(r => r.tool_use_id === tool.id);
+            if (result) {
+              contentBlocks.push({
+                type: 'tool_result',
+                tool_use_id: result.tool_use_id,
+                content: result.content,
+                is_error: false,
+              });
+            }
+          }
+
+          // Add text content at the end
+          if (accumulated.trim()) {
+            contentBlocks.push({
+              type: 'text',
+              text: accumulated.trim(),
+            });
+          }
+
           const assistantMessage: Message = {
             id: 'temp-assistant-' + Date.now(),
             session_id: sessionId,
             role: 'assistant',
-            content: accumulated.trim(),
+            content: JSON.stringify(contentBlocks), // 🔧 保存完整的 contentBlocks
             created_at: new Date().toISOString(),
             token_usage: tokenUsage ? JSON.stringify(tokenUsage) : null,
           };
@@ -384,25 +522,48 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
         accumulatedRef.current = '';
         setToolUses([]);
         setToolResults([]);
+        // 🔧 清空 ref
+        toolUsesRef.current = [];
+        toolResultsRef.current = [];
         setStreamingToolOutput('');
         setStatusText(undefined);
+        // 🔧 Teams 模式下延迟清理通知，避免与 SDK hooks 竞态
+        if (mode !== 'teams') {
+          setTeamNotifications([]);
+        } else {
+          // Teams 模式下延迟 2 秒清理，给 SDK hooks 足够时间
+          setTimeout(() => setTeamNotifications([]), 2000);
+        }
         setPendingPermission(null);
         setPermissionResolved(null);
         setPendingApprovalSessionId('');
         abortControllerRef.current = null;
       }
     },
-    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel]
+    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, workingDirectory]
   );
 
   const handleCommand = useCallback((command: string) => {
     switch (command) {
       case '/help': {
+        // 动态生成帮助信息：优先使用 SDK 返回的 skills（包含 description）
+        let cmdList: string;
+        if (sdkSkills.length > 0) {
+          // ✅ 使用 SDK 返回的 skills（包含 description）
+          cmdList = sdkSkills
+            .map(s => `- **/${s.name}** — ${s.description}`)
+            .join('\n');
+        } else if (sdkSlashCommands.length > 0) {
+          // Fallback：只有命令名，无 description
+          cmdList = sdkSlashCommands.map(c => `- **/${c}**`).join('\n');
+        } else {
+          cmdList = '_(send a message first to load available commands)_';
+        }
         const helpMessage: Message = {
           id: 'cmd-' + Date.now(),
           session_id: sessionId,
           role: 'assistant',
-          content: `## Available Commands\n\n### Instant Commands\n- **/help** — Show this help message\n- **/clear** — Clear conversation history\n- **/cost** — Show token usage statistics\n\n### Prompt Commands (shown as badge, add context then send)\n- **/compact** — Compress conversation context\n- **/doctor** — Diagnose project health\n- **/init** — Initialize CLAUDE.md for project\n- **/review** — Review code quality\n- **/terminal-setup** — Configure terminal settings\n- **/memory** — Edit project memory file\n\n### Custom Skills\nSkills from \`~/.claude/commands/\` and project \`.claude/commands/\` are also available via \`/\`.\n\n**Tips:**\n- Type \`/\` to browse commands and skills\n- Type \`@\` to mention files\n- Use Shift+Enter for new line\n- Select a project folder to enable file operations`,
+          content: `## Available Commands\n\n### App Commands\n- **/help** — Show this help\n- **/clear** — Clear conversation history\n\n### SDK Commands\n${cmdList}\n\n**Tips:**\n- Type \`/\` to browse all commands and skills\n- Type \`@\` to mention files\n- Commands from \`~/.claude/skills/\`, \`~/.claude/commands/\` and project \`.claude/\` are auto-loaded\n- Select a project folder to see project-level commands`,
           created_at: new Date().toISOString(),
           token_usage: null,
         };
@@ -467,10 +628,22 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
         // This shouldn't be reached since non-immediate commands are handled via badge
         sendMessage(command);
     }
-  }, [sessionId, sendMessage]);
+  }, [sessionId, sendMessage, sdkSkills, sdkSlashCommands, messages]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <TeamDashboard
+        isTeamsMode={mode === 'teams'}
+      />
+      {messages.length > 0 && (
+        <div className="flex items-center justify-end px-4 py-1 border-b border-zinc-200 dark:border-zinc-800">
+          <SummarizeButton
+            sessionId={sessionId}
+            messages={messages}
+            workingDirectory={workingDirectory}
+          />
+        </div>
+      )}
       <MessageList
         messages={messages}
         streamingContent={streamingContent}
@@ -482,6 +655,7 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
         pendingPermission={pendingPermission}
         onPermissionResponse={handlePermissionResponse}
         permissionResolved={permissionResolved}
+        teamNotifications={teamNotifications}
       />
       <MessageInput
         onSend={sendMessage}
@@ -491,11 +665,13 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
         isStreaming={isStreaming}
         sessionId={sessionId}
         modelName={currentModel}
-        onModelChange={setCurrentModel}
+        onModelChange={handleModelChange}
         workingDirectory={workingDirectory}
         onWorkingDirectoryChange={handleWorkingDirectoryChange}
         mode={mode}
         onModeChange={handleModeChange}
+        sdkSlashCommands={sdkSlashCommands}
+        sdkSkills={sdkSkills}
       />
     </div>
   );

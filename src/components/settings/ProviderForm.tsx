@@ -56,6 +56,7 @@ export interface ProviderFormData {
   api_key: string;
   extra_env: string;
   notes: string;
+  default_model?: string;
 }
 
 export function ProviderForm({
@@ -72,6 +73,7 @@ export function ProviderForm({
   const [apiKey, setApiKey] = useState("");
   const [extraEnv, setExtraEnv] = useState("{}");
   const [notes, setNotes] = useState("");
+  const [defaultModel, setDefaultModel] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -89,6 +91,7 @@ export function ProviderForm({
       setApiKey("");
       setExtraEnv(provider.extra_env || "{}");
       setNotes(provider.notes || "");
+      setDefaultModel(provider.default_model || "");
       // Show advanced if extra_env has content
       try {
         const parsed = JSON.parse(provider.extra_env || "{}");
@@ -105,6 +108,7 @@ export function ProviderForm({
       const envStr = initialPreset.extra_env || PROVIDER_PRESETS[initialPreset.provider_type]?.extra_env || "{}";
       setExtraEnv(envStr);
       setNotes("");
+      setDefaultModel("");
       try {
         const parsed = JSON.parse(envStr);
         setShowAdvanced(Object.keys(parsed).length > 0);
@@ -118,6 +122,7 @@ export function ProviderForm({
       setApiKey("");
       setExtraEnv("{}");
       setNotes("");
+      setDefaultModel("");
       setShowAdvanced(false);
     }
   }, [open, mode, provider, initialPreset]);
@@ -162,6 +167,7 @@ export function ProviderForm({
         api_key: apiKey,
         extra_env: extraEnv,
         notes: notes.trim(),
+        default_model: defaultModel.trim() || undefined,
       });
       onOpenChange(false);
     } catch (err) {
@@ -242,6 +248,19 @@ export function ProviderForm({
               placeholder={isMaskedKey ? "Leave empty to keep current key" : "sk-ant-..."}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
+              className="font-mono text-sm"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="provider-default-model" className="text-xs text-muted-foreground">
+              Default Model (Optional)
+            </Label>
+            <Input
+              id="provider-default-model"
+              placeholder="e.g. claude-3-5-sonnet-20241022"
+              value={defaultModel}
+              onChange={(e) => setDefaultModel(e.target.value)}
               className="font-mono text-sm"
             />
           </div>

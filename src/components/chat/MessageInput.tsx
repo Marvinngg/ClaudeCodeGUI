@@ -13,6 +13,7 @@ import {
   CommandLineIcon,
   Attachment01Icon,
   Cancel01Icon,
+  UserGroupIcon,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 import { FolderPicker } from './FolderPicker';
@@ -28,6 +29,7 @@ import {
 import type { ChatStatus } from 'ai';
 import type { FileAttachment } from '@/types';
 import { nanoid } from 'nanoid';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 // Accepted file types for upload
 const ACCEPTED_FILE_TYPES = [
@@ -55,6 +57,8 @@ interface MessageInputProps {
   onWorkingDirectoryChange?: (dir: string) => void;
   mode?: string;
   onModeChange?: (mode: string) => void;
+  sdkSlashCommands?: string[]; // SDK init 事件返回的命令名列表
+  sdkSkills?: Array<{ name: string; description: string }>; // SDK init 事件返回的 skills 元数据
 }
 
 interface PopoverItem {
@@ -76,24 +80,11 @@ interface CommandBadge {
 
 type PopoverMode = 'file' | 'skill' | null;
 
-// Expansion prompts for CLI-only commands (not natively supported by SDK).
-// SDK-native commands (/compact, /init, /review) are sent as-is — the SDK handles them directly.
-const COMMAND_PROMPTS: Record<string, string> = {
-  '/doctor': 'Run diagnostic checks on this project. Check system health, dependencies, configuration files, and report any issues.',
-  '/terminal-setup': 'Help me configure my terminal for optimal use with Claude Code. Check current setup and suggest improvements.',
-  '/memory': 'Show the current CLAUDE.md project memory file and help me review or edit it.',
-};
-
-const BUILT_IN_COMMANDS: PopoverItem[] = [
-  { label: 'help', value: '/help', description: 'Show available commands and tips', builtIn: true, immediate: true },
+// Frontend-only commands — handled entirely by the app, not sent to SDK
+const FRONTEND_COMMANDS: PopoverItem[] = [
+  { label: 'help', value: '/help', description: 'Show available commands', builtIn: true, immediate: true },
   { label: 'clear', value: '/clear', description: 'Clear conversation history', builtIn: true, immediate: true },
   { label: 'cost', value: '/cost', description: 'Show token usage statistics', builtIn: true, immediate: true },
-  { label: 'compact', value: '/compact', description: 'Compress conversation context', builtIn: true },
-  { label: 'doctor', value: '/doctor', description: 'Diagnose project health', builtIn: true },
-  { label: 'init', value: '/init', description: 'Initialize CLAUDE.md for project', builtIn: true },
-  { label: 'review', value: '/review', description: 'Review code quality', builtIn: true },
-  { label: 'terminal-setup', value: '/terminal-setup', description: 'Configure terminal settings', builtIn: true },
-  { label: 'memory', value: '/memory', description: 'Edit project memory file', builtIn: true },
 ];
 
 interface ModeOption {
@@ -107,10 +98,13 @@ const MODE_OPTIONS: ModeOption[] = [
   { value: 'code', label: 'Code', icon: Wrench01Icon, description: 'Read, write files & run commands' },
   { value: 'plan', label: 'Plan', icon: ClipboardIcon, description: 'Analyze & plan without executing' },
   { value: 'ask', label: 'Ask', icon: HelpCircleIcon, description: 'Answer questions only' },
+  // Teams mode: 后端代码保留，前端暂不提供入口（CLI --print 模式不适合长时间 agent 协作）
+  // { value: 'teams', label: 'Teams', icon: UserGroupIcon, description: 'Multi-agent collaboration (experimental)' },
 ];
 
 // Default Claude model options — labels are dynamically overridden by active provider
 const DEFAULT_MODEL_OPTIONS = [
+  { value: '', label: 'Default' },
   { value: 'sonnet', label: 'Sonnet 4.5' },
   { value: 'opus', label: 'Opus 4.6' },
   { value: 'haiku', label: 'Haiku 4.5' },
@@ -288,7 +282,10 @@ export function MessageInput({
   onWorkingDirectoryChange,
   mode = 'code',
   onModeChange,
+  sdkSlashCommands = [],
+  sdkSkills = [],
 }: MessageInputProps) {
+  const { t } = useLanguage();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
@@ -357,40 +354,77 @@ export function MessageInput({
     }
   }, [sessionId]);
 
-  // Fetch skills for / command (built-in + API)
-  const fetchSkills = useCallback(async (filter: string) => {
-    const builtIn = BUILT_IN_COMMANDS.filter((cmd) =>
-      cmd.label.toLowerCase().includes(filter.toLowerCase())
-    );
+  // Fetch all available / commands: frontend commands + SDK skills
+  // ✅ 优先使用 SDK 返回的 skills（确保与模型看到的一致），fallback 到文件系统扫描
+  const fetchCommands = useCallback(async (filter: string) => {
+    const lowerFilter = filter.toLowerCase();
+    const items: PopoverItem[] = [];
+    const seen = new Set<string>();
 
-    let apiSkills: PopoverItem[] = [];
-    try {
-      const res = await fetch('/api/skills');
-      if (res.ok) {
-        const data = await res.json();
-        const skills = data.skills || [];
-        apiSkills = skills
-          .filter((s: { name: string }) => s.name.toLowerCase().includes(filter.toLowerCase()))
-          .map((s: { name: string; description: string; source?: string; installedSource?: "agents" | "claude" }) => {
-            const sourceHint =
-              s.source === "installed" && s.installedSource
-                ? ` (${s.installedSource})`
-                : "";
-            return {
-              label: s.name,
-              value: `/${s.name}`,
-              description: `${s.description || ""}${sourceHint}`,
-              builtIn: false,
-              installedSource: s.installedSource,
-            };
-          });
+    // 1. Frontend-only commands (help, clear, cost)
+    for (const cmd of FRONTEND_COMMANDS) {
+      if (cmd.label.toLowerCase().includes(lowerFilter)) {
+        items.push(cmd);
+        seen.add(cmd.value);
       }
-    } catch {
-      // API not available - just use built-in commands
     }
 
-    return [...builtIn, ...apiSkills].slice(0, 20);
-  }, []);
+    // 2. SDK skills（优先使用 SDK 返回的完整 skills 列表，确保与模型一致）
+    if (sdkSkills && sdkSkills.length > 0) {
+      // ✅ SDK 已返回 skills 元数据，直接使用（包含内置命令 + 用户自定义 skills）
+      for (const skill of sdkSkills) {
+        const value = `/${skill.name}`;
+        if (seen.has(value)) continue;
+        if (skill.name.toLowerCase().includes(lowerFilter)) {
+          items.push({
+            label: skill.name,
+            value,
+            description: skill.description,
+            builtIn: false, // SDK 返回的都是 skills（包括内置和用户自定义）
+          });
+          seen.add(value);
+        }
+      }
+    } else {
+      // ⚠️ Fallback：SDK 未返回 skills（旧版本或未初始化），使用 slash_commands + 文件系统
+      // 2a. SDK built-in slash commands（只有命令名，无 description）
+      for (const name of sdkSlashCommands) {
+        const value = `/${name}`;
+        if (seen.has(value)) continue;
+        if (name.toLowerCase().includes(lowerFilter)) {
+          items.push({ label: name, value, builtIn: true });
+          seen.add(value);
+        }
+      }
+
+      // 2b. 文件系统扫描（补充 description）
+      try {
+        const params = new URLSearchParams();
+        if (workingDirectory) params.set('cwd', workingDirectory);
+        const res = await fetch(`/api/skills?${params.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          for (const skill of data.skills || []) {
+            const value = `/${skill.name}`;
+            if (seen.has(value)) continue;
+            if (skill.name.toLowerCase().includes(lowerFilter)) {
+              items.push({
+                label: skill.name,
+                value,
+                description: skill.description,
+                installedSource: skill.installedSource,
+              });
+              seen.add(value);
+            }
+          }
+        }
+      } catch {
+        // silent — skills API unavailable
+      }
+    }
+
+    return items.slice(0, 30);
+  }, [sdkSkills, sdkSlashCommands, workingDirectory]);
 
   // Close popover
   const closePopover = useCallback(() => {
@@ -411,15 +445,15 @@ export function MessageInput({
   const insertItem = useCallback((item: PopoverItem) => {
     if (triggerPos === null) return;
 
-    // Immediate built-in commands: execute right away
-    if (item.builtIn && item.immediate && onCommand) {
+    // Frontend immediate commands (help, clear): execute right away
+    if (item.immediate && onCommand) {
       setInputValue('');
       closePopover();
       onCommand(item.value);
       return;
     }
 
-    // Non-immediate commands (prompt-based built-ins and skills): show as badge
+    // Slash commands and skills: show as badge, user can add args, then send to SDK
     if (popoverMode === 'skill') {
       setBadge({
         command: item.value,
@@ -479,7 +513,7 @@ export function MessageInput({
       setPopoverFilter(filter);
       setTriggerPos(cursorPos - slashMatch[2].length - 1);
       setSelectedIndex(0);
-      const items = await fetchSkills(filter);
+      const items = await fetchCommands(filter);  // ← 改为 fetchCommands
       setPopoverItems(items);
       return;
     }
@@ -487,7 +521,7 @@ export function MessageInput({
     if (popoverMode) {
       closePopover();
     }
-  }, [fetchFiles, fetchSkills, popoverMode, closePopover]);
+  }, [fetchFiles, fetchCommands, popoverMode, closePopover]);
 
   const handleSubmit = useCallback(async (msg: { text: string; files: Array<{ type: string; url: string; filename?: string; mediaType?: string }> }, e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -521,36 +555,15 @@ export function MessageInput({
       return attachments;
     };
 
-    // If badge is active, expand the command/skill and send
+    // Badge active: send /command [args] directly to SDK
     if (badge) {
-      let expandedPrompt = '';
-
-      if (badge.isSkill) {
-        // Fetch skill content from API
-        try {
-          const sourceParam = badge.installedSource
-            ? `?source=${badge.installedSource}`
-            : "";
-          const res = await fetch(
-            `/api/skills/${encodeURIComponent(badge.label)}${sourceParam}`
-          );
-          if (res.ok) {
-            const data = await res.json();
-            expandedPrompt = data.skill?.content || '';
-          }
-        } catch {
-          // Fallback: use command name
-        }
-      } else {
-        // Built-in prompt command expansion
-        expandedPrompt = COMMAND_PROMPTS[badge.command] || '';
-      }
-
-      const finalPrompt = content
-        ? `${expandedPrompt}\n\nUser context: ${content}`
-        : expandedPrompt || badge.command;
-
       const files = await convertFiles();
+      // 直接发 /command-name 给 SDK，SDK 原生处理
+      // 用户输入的内容作为命令参数追加
+      const finalPrompt = content
+        ? `${badge.command} ${content}`
+        : badge.command;
+
       setBadge(null);
       setInputValue('');
       onSend(finalPrompt, files.length > 0 ? files : undefined);
@@ -562,38 +575,20 @@ export function MessageInput({
 
     if ((!content && !hasFiles) || disabled) return;
 
-    // Check if it's a direct slash command typed in the input
+    // Slash command handling
     if (content.startsWith('/') && !hasFiles) {
-      const cmd = BUILT_IN_COMMANDS.find(c => c.value === content);
-      if (cmd) {
-        if (cmd.immediate && onCommand) {
-          setInputValue('');
-          onCommand(content);
-          return;
-        }
-        // Non-immediate: show as badge for user to add context
-        setBadge({
-          command: cmd.value,
-          label: cmd.label,
-          description: cmd.description || '',
-          isSkill: false,
-        });
+      // Frontend-only commands (help, clear): handle locally
+      const frontendCmd = FRONTEND_COMMANDS.find(c => c.value === content);
+      if (frontendCmd?.immediate && onCommand) {
         setInputValue('');
+        onCommand(content);
         return;
       }
 
-      // Not a built-in command — treat as a skill
-      const skillName = content.slice(1);
-      if (skillName) {
-        setBadge({
-          command: content,
-          label: skillName,
-          description: '',
-          isSkill: true,
-        });
-        setInputValue('');
-        return;
-      }
+      // All other /commands: send directly to SDK
+      onSend(content);
+      setInputValue('');
+      return;
     }
 
     onSend(content || 'Please review the attached file(s).', hasFiles ? files : undefined);
@@ -615,11 +610,14 @@ export function MessageInput({
           return;
         }
         if (e.key === 'Enter' || e.key === 'Tab') {
-          e.preventDefault();
           if (filteredItems[selectedIndex]) {
+            e.preventDefault();
             insertItem(filteredItems[selectedIndex]);
+            return;
           }
-          return;
+          // ✅ 没有匹配项时，关闭 popover 并正常提交
+          closePopover();
+          // 不 return，让 Enter 继续触发表单提交
         }
         if (e.key === 'Escape') {
           e.preventDefault();
@@ -685,7 +683,7 @@ export function MessageInput({
     item.label.toLowerCase().includes(popoverFilter.toLowerCase())
   );
 
-  const currentModelValue = modelName || 'sonnet';
+  const currentModelValue = modelName || '';
   const currentModelOption = MODEL_OPTIONS.find((m) => m.value === currentModelValue) || MODEL_OPTIONS[0];
   const currentMode = MODE_OPTIONS.find((m) => m.value === mode) || MODE_OPTIONS[0];
 
@@ -712,7 +710,7 @@ export function MessageInput({
               <div className="max-h-48 overflow-y-auto py-1">
                 {filteredItems.map((item, i) => (
                   <button
-                    key={item.value}
+                    key={`${item.value}-${i}`}
                     ref={i === selectedIndex ? (el) => { el?.scrollIntoView({ block: 'nearest' }); } : undefined}
                     className={cn(
                       "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors",
@@ -729,9 +727,9 @@ export function MessageInput({
                       <HugeiconsIcon icon={DivideSignIcon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     )}
                     <span className="font-mono text-xs truncate">{item.label}</span>
-                    {item.builtIn && (
-                      <span className="text-[9px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-400 font-medium shrink-0">
-                        Built-in
+                    {item.immediate && (
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-zinc-500/10 text-zinc-400 font-medium shrink-0">
+                        App
                       </span>
                     )}
                     {item.description && (
@@ -776,7 +774,7 @@ export function MessageInput({
             <FileAttachmentsCapsules />
             <PromptInputTextarea
               ref={textareaRef}
-              placeholder={badge ? "Add details (optional), then press Enter..." : "Message Claude..."}
+              placeholder={badge ? t('Add details (optional), then press Enter...') : t('Message Claude...')}
               value={inputValue}
               onChange={(e) => handleInputChange(e.currentTarget.value)}
               onKeyDown={handleKeyDown}

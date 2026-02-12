@@ -14,6 +14,7 @@ import {
   FolderOpenIcon,
   Loading02Icon,
   LayoutTwoColumnIcon,
+  CloudUploadIcon,
 } from "@hugeicons/core-free-icons";
 import {
   Tooltip,
@@ -29,11 +30,14 @@ type ViewMode = "edit" | "preview" | "split";
 
 interface SkillEditorProps {
   skill: SkillItem;
-  onSave: (skill: SkillItem, content: string) => Promise<void>;
-  onDelete: (skill: SkillItem) => void;
+  onSave?: (skill: SkillItem, content: string) => Promise<void>;
+  onDelete?: (skill: SkillItem) => void;
+  onPublish?: () => void;
+  readOnly?: boolean;
+  extraActions?: React.ReactNode;
 }
 
-export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
+export function SkillEditor({ skill, onSave, onDelete, onPublish, readOnly = false, extraActions }: SkillEditorProps) {
   const [content, setContent] = useState(skill.content);
   const [viewMode, setViewMode] = useState<ViewMode>("edit");
   const [saving, setSaving] = useState(false);
@@ -51,9 +55,60 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
   }, [skill.name, skill.filePath, skill.content]);
 
   const handleSave = useCallback(async () => {
+    // ✅ 提取真实的 skill 名称（从 filePath）
+    const filePath = skill.filePath;
+    let realSkillName: string;
+
+    if (filePath.endsWith('/SKILL.md') || filePath.endsWith('\\SKILL.md')) {
+      // 新格式：提取目录名
+      const parts = filePath.split(/[/\\]/);
+      realSkillName = parts[parts.length - 2];
+    } else {
+      // 旧格式：提取文件名（去掉 .md）
+      const fileName = filePath.split(/[/\\]/).pop() || '';
+      realSkillName = fileName.replace(/\.md$/, '');
+    }
+
+    // ✅ 检查 YAML 中的 name 是否和目录名/文件名一致
+    const yamlMatch = content.match(/^---\r?\n([\s\S]+?)\r?\n---/);
+    if (yamlMatch && yamlMatch[1]) {
+      const yamlContent = yamlMatch[1];
+      const nameMatch = yamlContent.match(/^name:\s*(.+)$/m);
+      if (nameMatch) {
+        const yamlName = nameMatch[1].trim();
+        if (yamlName !== realSkillName) {
+          // ✅ 检测到重命名：提示用户确认
+          const confirmed = confirm(
+            `You are renaming this skill from "${realSkillName}" to "${yamlName}".\n\n` +
+            `This will:\n` +
+            `- Rename the skill directory/file\n` +
+            `- Update the command from /${realSkillName} to /${yamlName}\n\n` +
+            `Continue?`
+          );
+
+          if (!confirmed) {
+            // 用户取消，不保存
+            return;
+          }
+          // 继续保存，后端会自动处理重命名
+        }
+      }
+
+      // ✅ 验证：检查是否有 prompt 内容（YAML 后面不能只有空白）
+      const afterYaml = content.slice(yamlMatch[0].length).trim();
+      if (!afterYaml) {
+        const confirmed = confirm(
+          "Warning: This skill has no prompt content after the YAML front matter.\n\n" +
+          "Skills without prompt content will NOT be visible to the model, even though they appear in the / command list.\n\n" +
+          "Do you still want to save?"
+        );
+        if (!confirmed) return;
+      }
+    }
+
     setSaving(true);
     try {
-      await onSave(skill, content);
+      await onSave?.(skill, content);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } finally {
@@ -89,7 +144,7 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
 
   const handleDelete = () => {
     if (confirmDelete) {
-      onDelete(skill);
+      onDelete?.(skill);
       setConfirmDelete(false);
     } else {
       setConfirmDelete(true);
@@ -121,27 +176,43 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
               "text-[10px] px-1.5 py-0 shrink-0",
               skill.source === "global"
                 ? "border-green-500/40 text-green-600 dark:text-green-400"
-                : skill.source === "installed"
-                  ? "border-orange-500/40 text-orange-600 dark:text-orange-400"
-                  : skill.source === "plugin"
-                    ? "border-purple-500/40 text-purple-600 dark:text-purple-400"
+                : skill.source === "plugin"
+                  ? "border-purple-500/40 text-purple-600 dark:text-purple-400"
+                  : skill.source === "hub"
+                    ? "border-cyan-500/40 text-cyan-600 dark:text-cyan-400"
                     : "border-blue-500/40 text-blue-600 dark:text-blue-400"
             )}
           >
             {skill.source === "global" ? (
               <HugeiconsIcon icon={GlobeIcon} className="h-2.5 w-2.5 mr-0.5" />
-            ) : skill.source === "installed" ? (
-              <HugeiconsIcon icon={FolderOpenIcon} className="h-2.5 w-2.5 mr-0.5" />
+            ) : skill.source === "hub" ? (
+              <HugeiconsIcon icon={CloudUploadIcon} className="h-2.5 w-2.5 mr-0.5" />
             ) : (
               <HugeiconsIcon icon={FolderOpenIcon} className="h-2.5 w-2.5 mr-0.5" />
             )}
-            {skill.source === "installed" && skill.installedSource
-              ? `installed:${skill.installedSource}`
-              : skill.source}
+            {skill.source}
           </Badge>
         </div>
 
         <div className="flex items-center gap-1">
+          {onPublish && (
+            <>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon-xs" onClick={onPublish}>
+                    <HugeiconsIcon icon={CloudUploadIcon} className="h-3 w-3" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Publish to Hub</TooltipContent>
+              </Tooltip>
+              <div className="w-px h-4 bg-border mx-1" />
+            </>
+          )}
+
+          {extraActions}
+
+          <div className="w-px h-4 bg-border mx-1" />
+
           {/* View mode toggles */}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -180,31 +251,36 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
             <TooltipContent>Split</TooltipContent>
           </Tooltip>
 
-          <div className="w-px h-4 bg-border mx-1" />
+          {(!readOnly) && (
+            <>
+              <div className="w-px h-4 bg-border mx-1" />
 
-          {/* Save */}
-          <Button
-            size="xs"
-            onClick={handleSave}
-            disabled={!isDirty || saving}
-            className="gap-1"
-          >
-            {saving ? (
-              <HugeiconsIcon icon={Loading02Icon} className="h-3 w-3 animate-spin" />
-            ) : (
-              <HugeiconsIcon icon={FloppyDiskIcon} className="h-3 w-3" />
-            )}
-            {saving ? "Saving" : saved ? "Saved" : "Save"}
-          </Button>
+              {/* Save */}
+              <Button
+                size="xs"
+                onClick={handleSave}
+                disabled={!isDirty || saving || !onSave}
+                className="gap-1"
+              >
+                {saving ? (
+                  <HugeiconsIcon icon={Loading02Icon} className="h-3 w-3 animate-spin" />
+                ) : (
+                  <HugeiconsIcon icon={FloppyDiskIcon} className="h-3 w-3" />
+                )}
+                {saving ? "Saving" : saved ? "Saved" : "Save"}
+              </Button>
 
-          {/* Delete */}
-          <Button
-            variant={confirmDelete ? "destructive" : "ghost"}
-            size="icon-xs"
-            onClick={handleDelete}
-          >
-            <HugeiconsIcon icon={Delete02Icon} className="h-3 w-3" />
-          </Button>
+              {/* Delete */}
+              <Button
+                variant={confirmDelete ? "destructive" : "ghost"}
+                size="icon-xs"
+                onClick={handleDelete}
+                disabled={!onDelete}
+              >
+                <HugeiconsIcon icon={Delete02Icon} className="h-3 w-3" />
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -214,8 +290,9 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
           <Textarea
             ref={textareaRef}
             value={content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={(e) => !readOnly && setContent(e.target.value)}
             onKeyDown={handleKeyDown}
+            readOnly={readOnly}
             className="h-full w-full resize-none rounded-none border-0 font-mono text-sm focus-visible:ring-0 focus-visible:ring-offset-0 min-h-[400px]"
             placeholder="Write your skill prompt in Markdown..."
           />
@@ -228,8 +305,9 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
             <div className="flex-1 min-w-0">
               <Textarea
                 value={content}
-                onChange={(e) => setContent(e.target.value)}
+                onChange={(e) => !readOnly && setContent(e.target.value)}
                 onKeyDown={handleKeyDown}
+                readOnly={readOnly}
                 className="h-full w-full resize-none rounded-none border-0 font-mono text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
                 placeholder="Write your skill prompt in Markdown..."
               />

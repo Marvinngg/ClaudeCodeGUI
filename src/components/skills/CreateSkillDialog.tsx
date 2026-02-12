@@ -19,11 +19,21 @@ import { cn } from "@/lib/utils";
 interface CreateSkillDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreate: (name: string, scope: "global" | "project", content: string) => Promise<void>;
+  onCreate: (name: string, scope: "global" | "project", content: string, projectPath?: string) => Promise<void>;
+  currentWorkingDirectory?: string;
 }
 
 const TEMPLATES: { label: string; content: string }[] = [
-  { label: "Blank", content: "" },
+  {
+    label: "Simple Skill",
+    content: `This is a simple skill template. Replace this text with instructions for Claude on how to handle this command.
+
+For example:
+- What should Claude do when this command is called?
+- What format should the output be in?
+- Any specific rules or constraints to follow?
+`,
+  },
   {
     label: "Commit Helper",
     content: `# Commit Helper
@@ -57,12 +67,14 @@ export function CreateSkillDialog({
   open,
   onOpenChange,
   onCreate,
+  currentWorkingDirectory,
 }: CreateSkillDialogProps) {
   const [name, setName] = useState("");
   const [scope, setScope] = useState<"global" | "project">("project");
   const [templateIdx, setTemplateIdx] = useState(0);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [projectPath, setProjectPath] = useState(currentWorkingDirectory || "");
 
   const handleCreate = async () => {
     const trimmed = name.trim();
@@ -75,14 +87,28 @@ export function CreateSkillDialog({
       return;
     }
 
+    // ✅ 验证：Skill 必须有 prompt 内容（不能是空白模板）
+    const templateContent = TEMPLATES[templateIdx].content.trim();
+    if (!templateContent) {
+      setError("Please select a template or add prompt content. Skills without prompt content will not be visible to the model.");
+      return;
+    }
+
+    // ✅ 项目级 skills 必须选择项目目录
+    if (scope === 'project' && !projectPath.trim()) {
+      setError("Please select a project directory");
+      return;
+    }
+
     setCreating(true);
     setError("");
     try {
-      await onCreate(trimmed, scope, TEMPLATES[templateIdx].content);
+      await onCreate(trimmed, scope, TEMPLATES[templateIdx].content, scope === 'project' ? projectPath : undefined);
       // Reset on success
       setName("");
       setScope("project");
       setTemplateIdx(0);
+      setProjectPath(currentWorkingDirectory || "");
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create skill");
@@ -97,7 +123,7 @@ export function CreateSkillDialog({
         <DialogHeader>
           <DialogTitle>Create New Skill</DialogTitle>
           <DialogDescription>
-            Create a new slash command skill. It will be saved as a .md file.
+            Create a new slash command skill. The skill name will be used as both the directory name and command name (/{name || 'skill-name'}). Skills must have prompt content to be visible to the model.
           </DialogDescription>
         </DialogHeader>
 
@@ -121,6 +147,46 @@ export function CreateSkillDialog({
               />
             </div>
           </div>
+
+          {/* Project directory (only for project scope) */}
+          {scope === "project" && (
+            <div className="space-y-2">
+              <Label htmlFor="project-path">Project Directory</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="project-path"
+                  placeholder="Select project directory..."
+                  value={projectPath}
+                  onChange={(e) => setProjectPath(e.target.value)}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    if (typeof window !== 'undefined' && (window as any).electron) {
+                      try {
+                        const result = await (window as any).electron.selectDirectory();
+                        if (result && !result.canceled && result.filePaths.length > 0) {
+                          setProjectPath(result.filePaths[0]);
+                        }
+                      } catch (err) {
+                        console.error('Failed to select directory:', err);
+                      }
+                    } else {
+                      alert('Directory picker is only available in Electron app');
+                    }
+                  }}
+                >
+                  Browse
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Skill will be saved in {projectPath || '(select a directory)'}/.claude/skills/
+              </p>
+            </div>
+          )}
 
           {/* Scope selection */}
           <div className="space-y-2">
@@ -153,11 +219,11 @@ export function CreateSkillDialog({
                 Global
               </button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              {scope === "project"
-                ? "Saved in .claude/commands/ (this project only)"
-                : "Saved in ~/.claude/commands/ (available everywhere)"}
-            </p>
+            {scope === "global" && (
+              <p className="text-xs text-muted-foreground">
+                Saved in ~/.claude/skills/ (available everywhere)
+              </p>
+            )}
           </div>
 
           {/* Template selection */}

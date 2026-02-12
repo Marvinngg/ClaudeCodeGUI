@@ -147,45 +147,47 @@ export function ImportSessionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[80vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <HugeiconsIcon
-              icon={FileImportIcon}
-              className="h-5 w-5 text-primary"
-            />
-            Import CLI Session
-          </DialogTitle>
-          <DialogDescription>
-            Browse and import conversations from Claude Code CLI. Imported
-            sessions can be resumed in CodePilot.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="sm:max-w-2xl h-[80vh] flex flex-col p-0">
+        <div className="p-6 pb-4">
+          <DialogHeader className="mb-4">
+            <DialogTitle className="flex items-center gap-2">
+              <HugeiconsIcon
+                icon={FileImportIcon}
+                className="h-5 w-5 text-primary"
+              />
+              Import CLI Session
+            </DialogTitle>
+            <DialogDescription>
+              Browse and import conversations from Claude Code CLI. Imported
+              sessions can be resumed in CodePilot.
+            </DialogDescription>
+          </DialogHeader>
 
-        {/* Search */}
-        <div className="relative">
-          <HugeiconsIcon
-            icon={Search01Icon}
-            className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            placeholder="Search by project, message, or branch..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-8 text-sm"
-          />
+          {/* Search */}
+          <div className="relative">
+            <HugeiconsIcon
+              icon={Search01Icon}
+              className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              placeholder="Search by project, message, or branch..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-8 text-sm"
+            />
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive mt-3">
+              {error}
+            </div>
+          )}
         </div>
 
-        {/* Error */}
-        {error && (
-          <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {error}
-          </div>
-        )}
-
-        {/* Session List */}
-        <ScrollArea className="flex-1 min-h-0 -mx-6 px-6">
-          <div className="flex flex-col gap-2 pb-2">
+        {/* Session List - 使用简单的 overflow-y-auto 替代 ScrollArea */}
+        <div className="flex-1 overflow-y-auto px-6 pb-6">
+          <div className="flex flex-col gap-2">
             {loading ? (
               <div className="flex items-center justify-center py-12">
                 <HugeiconsIcon
@@ -316,7 +318,7 @@ export function ImportSessionDialog({
               })
             )}
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );

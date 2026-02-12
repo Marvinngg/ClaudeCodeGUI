@@ -26,6 +26,10 @@ import {
   Loading02Icon,
 } from "@hugeicons/core-free-icons";
 import { ProviderManager } from "@/components/settings/ProviderManager";
+import { HubSettings } from "@/components/settings/HubSettings";
+import { HubResourcesManager } from "@/components/hub/HubResourcesManager";
+import { SummarizeSettings } from "@/components/settings/SummarizeSettings";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 interface SettingsData {
   [key: string]: unknown;
@@ -76,6 +80,16 @@ function SettingsPageInner() {
   const [pendingSaveAction, setPendingSaveAction] = useState<
     "form" | "json" | null
   >(null);
+  const { t } = useLanguage();
+
+  // Hub settings state for passing to HubResourcesManager
+  const [hubSettings, setHubSettings] = useState<{
+    hub_url: string;
+    hub_user_id: string;
+  }>({
+    hub_url: "",
+    hub_user_id: "",
+  });
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -96,9 +110,26 @@ function SettingsPageInner() {
     }
   }, []);
 
+  const fetchHubSettings = useCallback(async () => {
+    try {
+      const res = await fetch("/api/settings/app");
+      if (res.ok) {
+        const data = await res.json();
+        const s = data.settings || {};
+        setHubSettings({
+          hub_url: s.hub_url || "",
+          hub_user_id: s.hub_user_id || "",
+        });
+      }
+    } catch {
+      // Silent
+    }
+  }, []);
+
   useEffect(() => {
     fetchSettings();
-  }, [fetchSettings]);
+    fetchHubSettings();
+  }, [fetchSettings, fetchHubSettings]);
 
   const hasChanges =
     JSON.stringify(settings) !== JSON.stringify(originalSettings);
@@ -170,21 +201,23 @@ function SettingsPageInner() {
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-border/50 px-6 pt-4 pb-4">
-        <h1 className="text-xl font-semibold">Settings</h1>
+        <h1 className="text-xl font-semibold">{t('Settings')}</h1>
         <p className="text-sm text-muted-foreground">
-          Manage CodePilot and Claude CLI settings
+          {t('Manage CodePilot and Claude CLI settings')}
         </p>
       </div>
 
       <div className="flex-1 overflow-auto p-6">
         <div className="max-w-3xl space-y-6">
           <ProviderManager />
+          <HubSettings />
+          <SummarizeSettings />
 
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <HugeiconsIcon icon={Loading02Icon} className="h-5 w-5 animate-spin text-muted-foreground" />
               <span className="ml-2 text-sm text-muted-foreground">
-                Loading settings...
+                {t('Loading settings...')}
               </span>
             </div>
           ) : (
@@ -192,11 +225,11 @@ function SettingsPageInner() {
               <TabsList className="mb-4">
                 <TabsTrigger value="form" className="gap-2">
                   <HugeiconsIcon icon={SlidersHorizontalIcon} className="h-4 w-4" />
-                  Visual Editor
+                  {t('Visual Editor')}
                 </TabsTrigger>
                 <TabsTrigger value="json" className="gap-2">
                   <HugeiconsIcon icon={CodeIcon} className="h-4 w-4" />
-                  JSON Editor
+                  {t('JSON Editor')}
                 </TabsTrigger>
               </TabsList>
 
@@ -252,7 +285,7 @@ function SettingsPageInner() {
                               }
                             />
                             <span className="text-sm text-muted-foreground">
-                              {value ? "Enabled" : "Disabled"}
+                              {value ? t('Enabled') : t('Disabled')}
                             </span>
                           </div>
                         ) : typeof value === "string" ? (
@@ -291,7 +324,7 @@ function SettingsPageInner() {
                       ) : (
                         <HugeiconsIcon icon={FloppyDiskIcon} className="h-4 w-4" />
                       )}
-                      {saving ? "Saving..." : "Save Changes"}
+                      {saving ? t('Saving...') : t('Save Changes')}
                     </Button>
                     <Button
                       variant="outline"
@@ -300,11 +333,11 @@ function SettingsPageInner() {
                       className="gap-2"
                     >
                       <HugeiconsIcon icon={ReloadIcon} className="h-4 w-4" />
-                      Reset
+                      {t('Reset')}
                     </Button>
                     {saveSuccess && (
                       <span className="text-sm text-green-600 dark:text-green-400">
-                        Settings saved successfully
+                        {t('Settings saved successfully')}
                       </span>
                     )}
                   </div>
@@ -337,7 +370,7 @@ function SettingsPageInner() {
                       ) : (
                         <HugeiconsIcon icon={FloppyDiskIcon} className="h-4 w-4" />
                       )}
-                      {saving ? "Saving..." : "Save JSON"}
+                      {saving ? t('Saving...') : t('Save JSON')}
                     </Button>
                     <Button
                       variant="outline"
@@ -345,7 +378,7 @@ function SettingsPageInner() {
                       className="gap-2"
                     >
                       <HugeiconsIcon icon={CodeIcon} className="h-4 w-4" />
-                      Format
+                      {t('Format')}
                     </Button>
                     <Button
                       variant="outline"
@@ -353,11 +386,11 @@ function SettingsPageInner() {
                       className="gap-2"
                     >
                       <HugeiconsIcon icon={ReloadIcon} className="h-4 w-4" />
-                      Reset
+                      {t('Reset')}
                     </Button>
                     {saveSuccess && (
                       <span className="text-sm text-green-600 dark:text-green-400">
-                        Settings saved successfully
+                        {t('Settings saved successfully')}
                       </span>
                     )}
                   </div>
@@ -372,18 +405,17 @@ function SettingsPageInner() {
       <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Save</AlertDialogTitle>
+            <AlertDialogTitle>{t('Confirm Save')}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will overwrite your current ~/.claude/settings.json file. Are
-              you sure you want to continue?
+              {t('Confirm save description')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => pendingSaveAction && handleSave(pendingSaveAction)}
             >
-              Save
+              {t('Save')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

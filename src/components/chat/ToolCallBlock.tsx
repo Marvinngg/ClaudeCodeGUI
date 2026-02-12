@@ -14,6 +14,7 @@ import {
   Loading02Icon,
   CheckmarkCircle02Icon,
   CancelCircleIcon,
+  UserGroupIcon,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 import { CodeBlock } from './CodeBlock';
@@ -29,9 +30,16 @@ interface ToolCallBlockProps {
   duration?: number;
 }
 
+// Team-related tool names
+const TEAM_TOOLS = new Set([
+  'teamcreate', 'teamdelete', 'task', 'taskcreate', 'taskupdate',
+  'tasklist', 'taskget', 'sendmessage', 'taskoutput', 'taskstop',
+]);
+
 // Classify tools by name
-function getToolCategory(name: string): 'read' | 'write' | 'bash' | 'search' | 'other' {
+function getToolCategory(name: string): 'read' | 'write' | 'bash' | 'search' | 'team' | 'other' {
   const lower = name.toLowerCase();
+  if (TEAM_TOOLS.has(lower)) return 'team';
   if (lower === 'read' || lower === 'readfile' || lower === 'read_file') return 'read';
   if (lower === 'write' || lower === 'edit' || lower === 'writefile' || lower === 'write_file'
     || lower === 'create_file' || lower === 'createfile'
@@ -50,6 +58,7 @@ function getToolIcon(category: ReturnType<typeof getToolCategory>): IconSvgEleme
     case 'write': return FileEditIcon;
     case 'bash': return CommandLineIcon;
     case 'search': return Search01Icon;
+    case 'team': return UserGroupIcon;
     case 'other': return Wrench01Icon;
   }
 }
@@ -78,6 +87,35 @@ function getToolSummary(name: string, input: unknown, category: ReturnType<typeo
     case 'search': {
       const pattern = (inp.pattern || inp.query || inp.glob || '') as string;
       return pattern ? `"${pattern}"` : name;
+    }
+    case 'team': {
+      const lower = name.toLowerCase();
+      if (lower === 'teamcreate') {
+        return `Create team: ${(inp.team_name || inp.name || '') as string || 'unnamed'}`;
+      }
+      if (lower === 'teamdelete') return 'Delete team';
+      if (lower === 'task') {
+        return `Spawn agent: ${(inp.description || '') as string || name}`;
+      }
+      if (lower === 'taskcreate') {
+        return `Create task: ${(inp.subject || '') as string || name}`;
+      }
+      if (lower === 'sendmessage') {
+        const msgType = (inp.type || '') as string;
+        if (msgType === 'broadcast') return 'Broadcast to team';
+        const recipient = (inp.recipient || '') as string;
+        return recipient ? `DM → ${recipient}` : 'Send message';
+      }
+      if (lower === 'taskupdate') {
+        const status = (inp.status || '') as string;
+        const taskId = (inp.taskId || '') as string;
+        return status ? `Update task #${taskId}: ${status}` : `Update task #${taskId}`;
+      }
+      if (lower === 'tasklist') return 'List tasks';
+      if (lower === 'taskget') return `Get task #${(inp.taskId || '') as string}`;
+      if (lower === 'taskoutput') return `Get task output: ${(inp.task_id || '') as string}`;
+      if (lower === 'taskstop') return `Stop task: ${(inp.task_id || '') as string}`;
+      return name;
     }
     default:
       return name;
@@ -125,17 +163,17 @@ function renderDiff(input: unknown): React.ReactNode | null {
   const newLines = newStr ? newStr.split('\n') : [];
 
   return (
-    <div className="my-2 rounded-md border border-zinc-700/50 overflow-hidden text-xs font-mono">
+    <div className="my-2 rounded-md border border-zinc-700/50 overflow-hidden text-xs font-mono bg-[#1e1e1e]">
       {oldLines.length > 0 && oldLines.map((line, i) => (
-        <div key={`old-${i}`} className="flex bg-red-950/30 text-red-300">
-          <span className="select-none w-8 text-right pr-2 text-red-400/60 shrink-0">-</span>
-          <span className="px-2 whitespace-pre-wrap break-all">{line}</span>
+        <div key={`old-${i}`} className="flex" style={{ backgroundColor: 'rgba(248,81,73,0.1)' }}>
+          <span className="select-none w-8 text-right pr-2 text-red-400 shrink-0">-</span>
+          <span className="px-2 whitespace-pre-wrap break-all text-zinc-300">{line}</span>
         </div>
       ))}
       {newLines.length > 0 && newLines.map((line, i) => (
-        <div key={`new-${i}`} className="flex bg-green-950/30 text-green-300">
-          <span className="select-none w-8 text-right pr-2 text-green-400/60 shrink-0">+</span>
-          <span className="px-2 whitespace-pre-wrap break-all">{line}</span>
+        <div key={`new-${i}`} className="flex" style={{ backgroundColor: 'rgba(63,185,80,0.1)' }}>
+          <span className="select-none w-8 text-right pr-2 text-green-400 shrink-0">+</span>
+          <span className="px-2 whitespace-pre-wrap break-all text-zinc-300">{line}</span>
         </div>
       ))}
     </div>
@@ -165,11 +203,14 @@ export function ToolCallBlock({
               <div className="text-xs text-muted-foreground font-mono px-1">{filePath}</div>
             )}
             {result && (
-              <CodeBlock
-                code={result.slice(0, 5000)}
-                language={guessLanguageFromPath(filePath)}
-                showLineNumbers={true}
-              />
+              <div>
+                <div className="text-xs font-medium text-muted-foreground mb-1 px-1">File Content</div>
+                <CodeBlock
+                  code={result.slice(0, 5000)}
+                  language={guessLanguageFromPath(filePath)}
+                  showLineNumbers={true}
+                />
+              </div>
             )}
             {!result && status === 'running' && (
               <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
@@ -258,6 +299,249 @@ export function ToolCallBlock({
         );
       }
 
+      case 'team': {
+        const inp = input as Record<string, unknown> | undefined;
+        const lower = name.toLowerCase();
+
+        const teamResult = result ? (
+          <div className="mt-2">
+            <div className="text-xs font-medium text-muted-foreground mb-1">Result</div>
+            <pre className="overflow-x-auto whitespace-pre-wrap text-xs font-mono text-muted-foreground bg-muted/50 rounded p-2 max-h-40 overflow-auto">
+              {result.slice(0, 3000)}
+            </pre>
+          </div>
+        ) : null;
+
+        // TeamCreate
+        if (lower === 'teamcreate') {
+          const teamName = (inp?.team_name || inp?.name || '') as string;
+          const description = (inp?.description || '') as string;
+          return (
+            <div className="space-y-2">
+              <div className="rounded-lg border border-orange-500/30 bg-orange-500/[0.05] p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="inline-block w-2 h-2 rounded-full bg-orange-500" />
+                  <span className="text-sm font-medium text-foreground">{teamName || 'Unnamed Team'}</span>
+                </div>
+                {description && (
+                  <p className="text-xs text-muted-foreground ml-4">{description}</p>
+                )}
+              </div>
+              {teamResult}
+            </div>
+          );
+        }
+
+        // Task (spawn agent)
+        if (lower === 'task') {
+          const description = (inp?.description || '') as string;
+          const subagentType = (inp?.subagent_type || '') as string;
+          const model = (inp?.model || '') as string;
+          const prompt = (inp?.prompt || '') as string;
+          return (
+            <div className="space-y-2">
+              <div className="rounded-lg border border-orange-500/30 bg-orange-500/[0.05] p-3 space-y-1.5">
+                {description && (
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">Description: </span>
+                    <span className="text-foreground">{description}</span>
+                  </div>
+                )}
+                {subagentType && (
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">Type: </span>
+                    <span className="inline-flex items-center rounded-full bg-orange-500/10 px-2 py-0.5 text-xs font-medium text-orange-500 ring-1 ring-inset ring-orange-500/20">{subagentType}</span>
+                  </div>
+                )}
+                {model && (
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">Model: </span>
+                    <span className="text-foreground font-mono">{model}</span>
+                  </div>
+                )}
+                {prompt && (
+                  <div className="text-xs mt-1.5">
+                    <span className="text-muted-foreground">Prompt: </span>
+                    <span className="text-foreground/70">{prompt.length > 200 ? prompt.slice(0, 200) + '...' : prompt}</span>
+                  </div>
+                )}
+              </div>
+              {teamResult}
+            </div>
+          );
+        }
+
+        // SendMessage
+        if (lower === 'sendmessage') {
+          const msgType = (inp?.type || 'message') as string;
+          const recipient = (inp?.recipient || '') as string;
+          const content = (inp?.content || '') as string;
+          const msgSummary = (inp?.summary || '') as string;
+          const approve = inp?.approve as boolean | undefined;
+
+          let accentBorder = 'border-blue-500/30';
+          let accentBg = 'bg-blue-500/[0.05]';
+          let dotColor = 'bg-blue-500';
+          let label = `DM to ${recipient}`;
+
+          if (msgType === 'broadcast') {
+            accentBorder = 'border-orange-500/30';
+            accentBg = 'bg-orange-500/[0.05]';
+            dotColor = 'bg-orange-500';
+            label = 'Broadcast to all';
+          } else if (msgType === 'shutdown_request') {
+            accentBorder = 'border-red-500/30';
+            accentBg = 'bg-red-500/[0.05]';
+            dotColor = 'bg-red-500';
+            label = `Shutdown request to ${recipient}`;
+          } else if (msgType === 'shutdown_response') {
+            const isApproved = approve === true;
+            accentBorder = isApproved ? 'border-green-500/30' : 'border-red-500/30';
+            accentBg = isApproved ? 'bg-green-500/[0.05]' : 'bg-red-500/[0.05]';
+            dotColor = isApproved ? 'bg-green-500' : 'bg-red-500';
+            label = isApproved ? 'Shutdown approved' : 'Shutdown rejected';
+          }
+
+          return (
+            <div className="space-y-2">
+              <div className={cn('rounded-lg border p-3', accentBorder, accentBg)}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={cn('inline-block w-2 h-2 rounded-full', dotColor)} />
+                  <span className="text-xs font-medium text-foreground">{label}</span>
+                </div>
+                {msgSummary && (
+                  <p className="text-xs text-muted-foreground ml-4 italic">{msgSummary}</p>
+                )}
+                {content && (
+                  <p className="text-xs text-foreground/70 ml-4 mt-1 whitespace-pre-wrap">{content.length > 300 ? content.slice(0, 300) + '...' : content}</p>
+                )}
+              </div>
+              {teamResult}
+            </div>
+          );
+        }
+
+        // TaskCreate
+        if (lower === 'taskcreate') {
+          const subject = (inp?.subject || '') as string;
+          const description = (inp?.description || '') as string;
+          const activeForm = (inp?.activeForm || '') as string;
+          return (
+            <div className="space-y-2">
+              <div className="rounded-lg border border-orange-500/30 bg-orange-500/[0.05] p-3 space-y-1.5">
+                {subject && (
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">Subject: </span>
+                    <span className="text-foreground font-medium">{subject}</span>
+                  </div>
+                )}
+                {description && (
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">Description: </span>
+                    <span className="text-foreground/70">{description}</span>
+                  </div>
+                )}
+                {activeForm && (
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">Active Form: </span>
+                    <span className="text-foreground font-mono">{activeForm}</span>
+                  </div>
+                )}
+              </div>
+              {teamResult}
+            </div>
+          );
+        }
+
+        // TaskUpdate
+        if (lower === 'taskupdate') {
+          const taskId = (inp?.taskId || '') as string;
+          const taskStatus = (inp?.status || '') as string;
+          const owner = (inp?.owner || '') as string;
+
+          const statusStyle: Record<string, string> = {
+            pending: 'bg-zinc-500/10 text-zinc-400 ring-zinc-500/20',
+            in_progress: 'bg-blue-500/10 text-blue-500 ring-blue-500/20',
+            completed: 'bg-green-500/10 text-green-500 ring-green-500/20',
+          };
+          const badgeClass = statusStyle[taskStatus] || 'bg-zinc-500/10 text-zinc-400 ring-zinc-500/20';
+
+          return (
+            <div className="space-y-2">
+              <div className="rounded-lg border border-orange-500/30 bg-orange-500/[0.05] p-3 space-y-1.5">
+                {taskId && (
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">Task: </span>
+                    <span className="text-foreground font-mono">#{taskId}</span>
+                  </div>
+                )}
+                {taskStatus && (
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">Status: </span>
+                    <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset', badgeClass)}>{taskStatus}</span>
+                  </div>
+                )}
+                {owner && (
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">Owner: </span>
+                    <span className="text-foreground">{owner}</span>
+                  </div>
+                )}
+              </div>
+              {teamResult}
+            </div>
+          );
+        }
+
+        // TaskList / TaskGet — simple display
+        if (lower === 'tasklist' || lower === 'taskget') {
+          return (
+            <div className="space-y-2">
+              {!result && status === 'running' && (
+                <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+                  <HugeiconsIcon icon={Loading02Icon} className="h-3 w-3 animate-spin" />
+                  {lower === 'tasklist' ? 'Fetching tasks...' : 'Fetching task...'}
+                </div>
+              )}
+              {teamResult}
+            </div>
+          );
+        }
+
+        // TaskOutput / TaskStop
+        if (lower === 'taskoutput' || lower === 'taskstop') {
+          const taskId = (inp?.task_id || '') as string;
+          const isStop = lower === 'taskstop';
+          return (
+            <div className="space-y-2">
+              <div className={cn(
+                'rounded-lg border p-3',
+                isStop ? 'border-red-500/30 bg-red-500/[0.05]' : 'border-orange-500/30 bg-orange-500/[0.05]'
+              )}>
+                <div className="flex items-center gap-2">
+                  <span className={cn('inline-block w-2 h-2 rounded-full', isStop ? 'bg-red-500' : 'bg-orange-500')} />
+                  <span className="text-xs text-muted-foreground">{isStop ? 'Stopping' : 'Reading output of'} task</span>
+                  {taskId && <span className="text-xs text-foreground font-mono">#{taskId}</span>}
+                </div>
+              </div>
+              {teamResult}
+            </div>
+          );
+        }
+
+        // Fallback for unknown team tools (e.g. teamdelete)
+        return (
+          <div className="space-y-2">
+            <div className="rounded-lg border border-orange-500/30 bg-orange-500/[0.05] p-3">
+              <pre className="overflow-x-auto whitespace-pre-wrap text-xs font-mono text-muted-foreground">
+                {JSON.stringify(input, null, 2)}
+              </pre>
+            </div>
+            {teamResult}
+          </div>
+        );
+      }
+
       default: {
         return (
           <div className="space-y-2">
@@ -313,6 +597,7 @@ export function ToolCallBlock({
           category === 'write' && "text-amber-500",
           category === 'bash' && "text-green-500",
           category === 'search' && "text-purple-500",
+          category === 'team' && "text-orange-500",
           category === 'other' && "text-zinc-500",
         )} />
         <span className="font-mono text-xs truncate flex-1 text-foreground/80">{summary}</span>

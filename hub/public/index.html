@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CodePilot Hub - Resource Manager</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    body {
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+    .resource-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      transition: all 0.2s;
+    }
+    .resource-card:hover {
+      border-color: #3b82f6;
+      box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+    }
+    .tab-button {
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+    .tab-button.active {
+      border-color: #3b82f6;
+      color: #3b82f6;
+    }
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.8);
+      z-index: 1000;
+    }
+    .modal.show {
+      display: flex;
+    }
+    .modal-content {
+      background: #1e293b;
+      border: 1px solid #334155;
+      max-width: 800px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    pre code {
+      border-radius: 0.5rem;
+    }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div class="container mx-auto px-4 py-8 max-w-7xl">
+    <!-- Header -->
+    <header class="mb-8 flex justify-between items-center">
+      <div>
+        <h1 class="text-4xl font-bold text-blue-400 mb-2">CodePilot Hub</h1>
+        <p class="text-gray-400">Resource Manager - Browse and manage shared resources</p>
+      </div>
+      <a href="/settings.html" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition">
+        ⚙️ Settings
+      </a>
+    </header>
+
+    <!-- Tabs -->
+    <div class="flex gap-6 mb-6 border-b border-gray-700">
+      <button class="tab-button active px-4 py-2 font-medium" data-tab="skills">
+        Skills <span id="skills-count" class="text-gray-500 text-sm ml-1">(0)</span>
+      </button>
+      <button class="tab-button px-4 py-2 font-medium" data-tab="conversations">
+        Conversations <span id="conversations-count" class="text-gray-500 text-sm ml-1">(0)</span>
+      </button>
+    </div>
+
+    <!-- Content Panels -->
+    <div id="skills-panel" class="tab-panel">
+      <div id="skills-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+    </div>
+
+    <div id="conversations-panel" class="tab-panel hidden">
+      <div id="conversations-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty-state" class="hidden text-center py-16">
+      <p class="text-gray-500 text-lg">No resources found</p>
+      <p class="text-gray-600 mt-2">Share resources from CodePilot to see them here</p>
+    </div>
+  </div>
+
+  <!-- Detail Modal -->
+  <div id="detail-modal" class="modal items-center justify-center">
+    <div class="modal-content w-full mx-4 rounded-lg p-6">
+      <div class="flex justify-between items-start mb-4">
+        <div class="flex-1">
+          <h2 id="modal-title" class="text-2xl font-bold text-blue-400 mb-2"></h2>
+          <p id="modal-meta" class="text-gray-500 text-sm"></p>
+        </div>
+        <button id="close-modal" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+      </div>
+
+      <div id="modal-description" class="mb-4 text-gray-400"></div>
+
+      <div class="mb-4">
+        <h3 class="text-lg font-semibold mb-2">Content</h3>
+        <div id="modal-content" class="bg-gray-900 rounded-lg p-4 overflow-x-auto"></div>
+      </div>
+
+      <div class="flex gap-3 justify-end">
+        <button id="delete-btn" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition">
+          Delete
+        </button>
+        <button id="close-modal-btn" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg transition">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://localhost:3100/api';
+    let currentTab = 'skills';
+    let currentResource = null;
+
+    // Tab switching
+    document.querySelectorAll('.tab-button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        switchTab(tab);
+      });
+    });
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+
+      document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+      document.getElementById(`${tab}-panel`).classList.remove('hidden');
+
+      loadResources(tab);
+    }
+
+    // Load resources
+    async function loadResources(type) {
+      try {
+        const response = await fetch(`${API_BASE}/shared/${type}`);
+        const data = await response.json();
+
+        document.getElementById(`${type}-count`).textContent = `(${data.length})`;
+
+        const listEl = document.getElementById(`${type}-list`);
+        listEl.innerHTML = '';
+
+        if (data.length === 0) {
+          listEl.innerHTML = '<p class="col-span-full text-center text-gray-500 py-8">No resources found</p>';
+          return;
+        }
+
+        data.forEach(item => {
+          const card = createResourceCard(item, type);
+          listEl.appendChild(card);
+        });
+      } catch (error) {
+        console.error(`Failed to load ${type}:`, error);
+        document.getElementById(`${type}-list`).innerHTML =
+          '<p class="col-span-full text-center text-red-500 py-8">Failed to load resources</p>';
+      }
+    }
+
+    // Create resource card
+    function createResourceCard(item, type) {
+      const card = document.createElement('div');
+      card.className = 'resource-card rounded-lg p-4 cursor-pointer';
+
+      const title = document.createElement('h3');
+      title.className = 'text-lg font-semibold text-blue-400 mb-2';
+      // ✅ Conversations 使用 title 字段，其他用 name
+      title.textContent = type === 'conversations' ? item.title : item.name;
+
+      const description = document.createElement('p');
+      description.className = 'text-gray-400 text-sm mb-3 line-clamp-2';
+      description.textContent = item.description || 'No description';
+
+      const meta = document.createElement('div');
+      meta.className = 'flex justify-between items-center text-xs text-gray-500';
+
+      const publisher = document.createElement('span');
+      // ✅ Conversations 使用 user_id，其他用 publisher
+      publisher.textContent = (type === 'conversations' ? item.user_id : item.publisher) || 'Anonymous';
+
+      const date = document.createElement('span');
+      date.textContent = new Date(item.created_at).toLocaleDateString();
+
+      meta.appendChild(publisher);
+      meta.appendChild(date);
+
+      card.appendChild(title);
+      card.appendChild(description);
+      card.appendChild(meta);
+
+      card.addEventListener('click', () => showDetail(item, type));
+
+      return card;
+    }
+
+    // Show detail modal
+    function showDetail(item, type) {
+      currentResource = { item, type };
+
+      // ✅ Conversations 使用 title，其他用 name
+      const displayName = type === 'conversations' ? item.title : item.name;
+      document.getElementById('modal-title').textContent = displayName;
+      document.getElementById('modal-description').textContent = item.description || 'No description';
+
+      // ✅ Conversations 使用 user_id，其他用 publisher
+      const publisher = (type === 'conversations' ? item.user_id : item.publisher) || 'Anonymous';
+      document.getElementById('modal-meta').textContent =
+        `By ${publisher} • ${new Date(item.created_at).toLocaleString()}`;
+
+      const contentEl = document.getElementById('modal-content');
+      const content = item.content || '';
+
+      // Render content
+      if (type === 'conversations') {
+        // ✅ Conversations 显示为纯文本（总结内容）
+        const pre = document.createElement('pre');
+        pre.className = 'whitespace-pre-wrap';
+        pre.textContent = content;
+        contentEl.innerHTML = '';
+        contentEl.appendChild(pre);
+      } else {
+        // Skills 显示为代码
+        const pre = document.createElement('pre');
+        const code = document.createElement('code');
+        code.textContent = content;
+        pre.appendChild(code);
+        contentEl.innerHTML = '';
+        contentEl.appendChild(pre);
+        hljs.highlightElement(code);
+      }
+
+      document.getElementById('detail-modal').classList.add('show');
+    }
+
+    // Close modal
+    function closeModal() {
+      document.getElementById('detail-modal').classList.remove('show');
+      currentResource = null;
+    }
+
+    document.getElementById('close-modal').addEventListener('click', closeModal);
+    document.getElementById('close-modal-btn').addEventListener('click', closeModal);
+
+    // Delete resource
+    document.getElementById('delete-btn').addEventListener('click', async () => {
+      if (!currentResource) return;
+
+      // ✅ Conversations 使用 title，其他用 name
+      const displayName = currentResource.type === 'conversations'
+        ? currentResource.item.title
+        : currentResource.item.name;
+
+      if (!confirm(`Are you sure you want to delete "${displayName}"?`)) {
+        return;
+      }
+
+      try {
+        const { item, type } = currentResource;
+        const response = await fetch(`${API_BASE}/shared/${type}/${item.id}`, {
+          method: 'DELETE'
+        });
+
+        if (response.ok) {
+          closeModal();
+          loadResources(type);
+        } else {
+          alert('Failed to delete resource');
+        }
+      } catch (error) {
+        console.error('Delete failed:', error);
+        alert('Failed to delete resource');
+      }
+    });
+
+    // Initial load
+    loadResources('skills');
+  </script>
+</body>
+</html>

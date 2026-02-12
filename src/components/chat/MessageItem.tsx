@@ -7,16 +7,9 @@ import {
   MessageContent,
   MessageResponse,
 } from '@/components/ai-elements/message';
-import {
-  Tool,
-  ToolHeader,
-  ToolContent,
-  ToolInput,
-  ToolOutput,
-} from '@/components/ai-elements/tool';
 import { CopyIcon, CheckIcon } from 'lucide-react';
-import type { ToolUIPart } from 'ai';
 import { FileAttachmentDisplay } from './FileAttachmentDisplay';
+import { ToolCallBlock } from './ToolCallBlock';
 
 interface MessageItemProps {
   message: Message;
@@ -149,12 +142,6 @@ function pairTools(tools: ToolBlock[]): Array<{
   return paired;
 }
 
-function getToolState(result?: string, isError?: boolean): ToolUIPart['state'] {
-  if (result === undefined) return 'input-available';
-  if (isError) return 'output-error';
-  return 'output-available';
-}
-
 function parseMessageFiles(content: string): { files: FileAttachment[]; text: string } {
   const match = content.match(/^<!--files:(.*?)-->\n?/);
   if (!match) return { files: [], text: content };
@@ -197,16 +184,24 @@ function CopyButton({ text }: { text: string }) {
 }
 
 function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
-  const totalTokens = usage.input_tokens + usage.output_tokens;
+  const inputTokens = usage.input_tokens ?? 0;
+  const outputTokens = usage.output_tokens ?? 0;
+  const totalTokens = inputTokens + outputTokens;
   const costStr = usage.cost_usd !== undefined && usage.cost_usd !== null
     ? ` · $${usage.cost_usd.toFixed(4)}`
     : '';
+
+  // 如果没有 token 数据（比如 teams 模式只有 cost），只显示 cost
+  if (totalTokens === 0 && costStr) {
+    return <span className="text-xs text-muted-foreground/50">{costStr.replace(' · ', '')}</span>;
+  }
+  if (totalTokens === 0) return null;
 
   return (
     <span className="group/tokens relative cursor-default text-xs text-muted-foreground/50">
       <span>{totalTokens.toLocaleString()} tokens{costStr}</span>
       <span className="pointer-events-none absolute bottom-full left-0 mb-1.5 whitespace-nowrap rounded-md bg-popover px-2.5 py-1.5 text-[11px] text-popover-foreground shadow-md border border-border/50 opacity-0 group-hover/tokens:opacity-100 transition-opacity duration-150 z-50">
-        In: {usage.input_tokens.toLocaleString()} · Out: {usage.output_tokens.toLocaleString()}
+        In: {inputTokens.toLocaleString()} · Out: {outputTokens.toLocaleString()}
         {usage.cache_read_input_tokens ? ` · Cache: ${usage.cache_read_input_tokens.toLocaleString()}` : ''}
         {costStr}
       </span>
@@ -252,20 +247,14 @@ export function MessageItem({ message }: MessageItemProps) {
         {!isUser && pairedTools.length > 0 && (
           <div className="space-y-2 w-full">
             {pairedTools.map((tool, i) => (
-              <Tool key={`tool-${i}`}>
-                <ToolHeader
-                  type="tool-invocation"
-                  title={tool.name}
-                  state={getToolState(tool.result, tool.isError)}
-                />
-                <ToolContent>
-                  <ToolInput input={tool.input} />
-                  <ToolOutput
-                    output={tool.result}
-                    errorText={tool.isError ? tool.result : undefined}
-                  />
-                </ToolContent>
-              </Tool>
+              <ToolCallBlock
+                key={`tool-${i}`}
+                name={tool.name}
+                input={tool.input}
+                result={tool.result}
+                isError={tool.isError}
+                status={tool.result !== undefined ? (tool.isError ? 'error' : 'success') : 'running'}
+              />
             ))}
           </div>
         )}

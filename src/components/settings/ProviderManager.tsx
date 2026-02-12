@@ -313,12 +313,15 @@ export function ProviderManager() {
           {sorted.map((provider) => {
             const isActive = provider.is_active === 1;
             const isActivating = activatingId === provider.id;
+            const isHub = provider.source === 'hub';
 
             return (
               <div
                 key={provider.id}
                 className={`rounded-lg border p-3 transition-colors ${
-                  isActive
+                  isHub
+                    ? "border-border/30 bg-muted/20 opacity-80"
+                    : isActive
                     ? "border-border bg-green-500/5"
                     : "border-border/50 hover:border-border"
                 }`}
@@ -326,12 +329,17 @@ export function ProviderManager() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium truncate">
+                      <span className={`text-sm font-medium truncate ${isHub ? "text-muted-foreground" : ""}`}>
                         {provider.name}
                       </span>
                       <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
                         {provider.provider_type}
                       </Badge>
+                      {isHub && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-blue-600 dark:text-blue-400 border-blue-500/30">
+                          Hub
+                        </Badge>
+                      )}
                       {isActive && (
                         <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-green-600 dark:text-green-400 border-green-500/30">
                           Active
@@ -381,18 +389,20 @@ export function ProviderManager() {
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      title="Edit"
+                      title={isHub ? "Hub providers are read-only" : "Edit"}
                       onClick={() => handleEdit(provider)}
+                      disabled={isHub}
                     >
-                      <HugeiconsIcon icon={PencilEdit01Icon} className="h-3 w-3" />
+                      <HugeiconsIcon icon={PencilEdit01Icon} className={`h-3 w-3 ${isHub ? "opacity-30" : ""}`} />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      title="Delete"
+                      title={isHub ? "Hub providers are read-only" : "Delete"}
                       onClick={() => setDeleteTarget(provider)}
+                      disabled={isHub}
                     >
-                      <HugeiconsIcon icon={Delete02Icon} className="h-3 w-3 text-destructive" />
+                      <HugeiconsIcon icon={Delete02Icon} className={`h-3 w-3 ${isHub ? "opacity-30" : "text-destructive"}`} />
                     </Button>
                   </div>
                 </div>

@@ -95,6 +95,18 @@ function initDb(db: Database.Database): void {
       FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS conversations (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      content TEXT NOT NULL,
+      tags TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS api_providers (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -105,6 +117,7 @@ function initDb(db: Database.Database): void {
       sort_order INTEGER NOT NULL DEFAULT 0,
       extra_env TEXT NOT NULL DEFAULT '{}',
       notes TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'local',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -113,6 +126,8 @@ function initDb(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
     CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON chat_sessions(updated_at);
     CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
+    CREATE INDEX IF NOT EXISTS idx_conversations_session_id ON conversations(session_id);
+    CREATE INDEX IF NOT EXISTS idx_conversations_created_at ON conversations(created_at);
   `);
 
   // Run migrations for existing databases
@@ -173,6 +188,17 @@ function migrateDb(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
   `);
 
+  // Migrate conversations table to add raw_messages and source
+  const convColumns = db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
+  const convColNames = convColumns.map(c => c.name);
+
+  if (!convColNames.includes('raw_messages')) {
+    db.exec("ALTER TABLE conversations ADD COLUMN raw_messages TEXT");
+  }
+  if (!convColNames.includes('source')) {
+    db.exec("ALTER TABLE conversations ADD COLUMN source TEXT NOT NULL DEFAULT 'local'");
+  }
+
   // Ensure api_providers table exists for databases created before this migration
   db.exec(`
     CREATE TABLE IF NOT EXISTS api_providers (
@@ -185,10 +211,21 @@ function migrateDb(db: Database.Database): void {
       sort_order INTEGER NOT NULL DEFAULT 0,
       extra_env TEXT NOT NULL DEFAULT '{}',
       notes TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'local',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // Add source column to api_providers if missing (Hub integration)
+  const providerColumns = db.prepare("PRAGMA table_info(api_providers)").all() as { name: string }[];
+  const providerColNames = providerColumns.map(c => c.name);
+  if (!providerColNames.includes('source')) {
+    db.exec("ALTER TABLE api_providers ADD COLUMN source TEXT NOT NULL DEFAULT 'local'");
+  }
+  if (!providerColNames.includes('default_model')) {
+    db.exec("ALTER TABLE api_providers ADD COLUMN default_model TEXT");
+  }
 
   // Migrate existing settings to a default provider if api_providers is empty
   const providerCount = db.prepare('SELECT COUNT(*) as count FROM api_providers').get() as { count: number };
@@ -202,6 +239,74 @@ function migrateDb(db: Database.Database): void {
         'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       ).run(id, 'Default', 'anthropic', baseUrlRow?.value || '', tokenRow?.value || '', 1, 0, '{}', 'Migrated from settings', now, now);
     }
+  }
+
+  // Hub cache tables for offline support
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hub_skills_cache (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      content TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      publisher TEXT NOT NULL DEFAULT '',
+      version INTEGER NOT NULL DEFAULT 1,
+      synced_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS hub_templates_cache (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      content TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      publisher TEXT NOT NULL DEFAULT '',
+      template_type TEXT NOT NULL DEFAULT 'claude_md',
+      synced_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS hub_prompts_cache (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      content TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      publisher TEXT NOT NULL DEFAULT '',
+      tags TEXT NOT NULL DEFAULT '[]',
+      synced_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS hub_sync_metadata (
+      resource_type TEXT PRIMARY KEY,
+      last_synced_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  // Migration: Optimize Hub cache tables with UNIQUE constraints and indexes
+  migrateHubCacheTables(db);
+}
+
+/**
+ * Migrate Hub cache tables to add UNIQUE constraints and indexes for better performance.
+ * This function is idempotent and can be safely called multiple times.
+ */
+function migrateHubCacheTables(db: Database.Database): void {
+  try {
+    // Check if indexes already exist to avoid redundant operations
+    const skillsIndexExists = db.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type='index' AND name='idx_hub_skills_cache_name'
+    `).get();
+
+    if (!skillsIndexExists) {
+      // Add indexes for better query performance
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_hub_skills_cache_name ON hub_skills_cache(name);
+        CREATE INDEX IF NOT EXISTS idx_hub_templates_cache_name ON hub_templates_cache(name);
+        CREATE INDEX IF NOT EXISTS idx_hub_prompts_cache_name ON hub_prompts_cache(name);
+      `);
+      console.log('[db] Hub cache table indexes created successfully');
+    }
+  } catch (err) {
+    console.warn('[db] Warning: Hub cache table migration encountered an issue:', err);
+    // Non-fatal: don't throw, allow the app to continue
   }
 }
 
@@ -229,8 +334,8 @@ export function createSession(
   const db = getDb();
   const id = crypto.randomBytes(16).toString('hex');
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
-  const wd = workingDirectory || process.cwd();
-  const projectName = path.basename(wd);
+  const wd = workingDirectory || '';
+  const projectName = wd ? path.basename(wd) : '';
 
   db.prepare(
     'INSERT INTO chat_sessions (id, title, created_at, updated_at, model, system_prompt, working_directory, sdk_session_id, project_name, status, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
@@ -421,7 +526,7 @@ export function createProvider(data: CreateProviderRequest): ApiProvider {
   const sortOrder = (maxRow.max_order ?? -1) + 1;
 
   db.prepare(
-    'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, notes, default_model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     id,
     data.name,
@@ -432,6 +537,7 @@ export function createProvider(data: CreateProviderRequest): ApiProvider {
     sortOrder,
     data.extra_env || '{}',
     data.notes || '',
+    data.default_model || null,
     now,
     now,
   );
@@ -452,10 +558,11 @@ export function updateProvider(id: string, data: UpdateProviderRequest): ApiProv
   const extraEnv = data.extra_env ?? existing.extra_env;
   const notes = data.notes ?? existing.notes;
   const sortOrder = data.sort_order ?? existing.sort_order;
+  const defaultModel = data.default_model ?? existing.default_model;
 
   db.prepare(
-    'UPDATE api_providers SET name = ?, provider_type = ?, base_url = ?, api_key = ?, extra_env = ?, notes = ?, sort_order = ?, updated_at = ? WHERE id = ?'
-  ).run(name, providerType, baseUrl, apiKey, extraEnv, notes, sortOrder, now, id);
+    'UPDATE api_providers SET name = ?, provider_type = ?, base_url = ?, api_key = ?, extra_env = ?, notes = ?, sort_order = ?, default_model = ?, updated_at = ? WHERE id = ?'
+  ).run(name, providerType, baseUrl, apiKey, extraEnv, notes, sortOrder, defaultModel, now, id);
 
   return getProvider(id);
 }
@@ -485,6 +592,153 @@ export function deactivateAllProviders(): void {
 }
 
 // ==========================================
+// Hub Cache Operations
+// ==========================================
+
+export interface HubSkill {
+  id: number;
+  name: string;
+  content: string;
+  description: string;
+  publisher: string;
+  version: number;
+  synced_at: string;
+}
+
+export interface HubTemplate {
+  id: number;
+  name: string;
+  content: string;
+  description: string;
+  publisher: string;
+  template_type: string;
+  synced_at: string;
+}
+
+export interface HubPrompt {
+  id: number;
+  name: string;
+  content: string;
+  description: string;
+  publisher: string;
+  tags: string;
+  synced_at: string;
+}
+
+// Skills Cache
+export function getCachedSkills(): HubSkill[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM hub_skills_cache ORDER BY name ASC').all() as HubSkill[];
+}
+
+export function upsertSkillCache(skill: Omit<HubSkill, 'synced_at'>): void {
+  const db = getDb();
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  db.prepare(`
+    INSERT INTO hub_skills_cache (id, name, content, description, publisher, version, synced_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      content = excluded.content,
+      description = excluded.description,
+      publisher = excluded.publisher,
+      version = excluded.version,
+      synced_at = excluded.synced_at
+  `).run(skill.id, skill.name, skill.content, skill.description, skill.publisher, skill.version, now);
+}
+
+export function clearSkillsCache(): void {
+  const db = getDb();
+  db.prepare('DELETE FROM hub_skills_cache').run();
+}
+
+export function deleteSkillCache(id: number): void {
+  const db = getDb();
+  db.prepare('DELETE FROM hub_skills_cache WHERE id = ?').run(id);
+}
+
+// Templates Cache
+export function getCachedTemplates(): HubTemplate[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM hub_templates_cache ORDER BY name ASC').all() as HubTemplate[];
+}
+
+export function upsertTemplateCache(template: Omit<HubTemplate, 'synced_at'>): void {
+  const db = getDb();
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  db.prepare(`
+    INSERT INTO hub_templates_cache (id, name, content, description, publisher, template_type, synced_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      content = excluded.content,
+      description = excluded.description,
+      publisher = excluded.publisher,
+      template_type = excluded.template_type,
+      synced_at = excluded.synced_at
+  `).run(template.id, template.name, template.content, template.description, template.publisher, template.template_type, now);
+}
+
+export function clearTemplatesCache(): void {
+  const db = getDb();
+  db.prepare('DELETE FROM hub_templates_cache').run();
+}
+
+export function deleteTemplateCache(id: number): void {
+  const db = getDb();
+  db.prepare('DELETE FROM hub_templates_cache WHERE id = ?').run(id);
+}
+
+// Prompts Cache
+export function getCachedPrompts(): HubPrompt[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM hub_prompts_cache ORDER BY name ASC').all() as HubPrompt[];
+}
+
+export function upsertPromptCache(prompt: Omit<HubPrompt, 'synced_at'>): void {
+  const db = getDb();
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  db.prepare(`
+    INSERT INTO hub_prompts_cache (id, name, content, description, publisher, tags, synced_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      content = excluded.content,
+      description = excluded.description,
+      publisher = excluded.publisher,
+      tags = excluded.tags,
+      synced_at = excluded.synced_at
+  `).run(prompt.id, prompt.name, prompt.content, prompt.description, prompt.publisher, prompt.tags, now);
+}
+
+export function clearPromptsCache(): void {
+  const db = getDb();
+  db.prepare('DELETE FROM hub_prompts_cache').run();
+}
+
+export function deletePromptCache(id: number): void {
+  const db = getDb();
+  db.prepare('DELETE FROM hub_prompts_cache WHERE id = ?').run(id);
+}
+
+// Sync Metadata
+export function getLastSyncTime(resourceType: string): string | null {
+  const db = getDb();
+  const row = db.prepare('SELECT last_synced_at FROM hub_sync_metadata WHERE resource_type = ?').get(resourceType) as { last_synced_at: string } | undefined;
+  return row?.last_synced_at || null;
+}
+
+export function updateSyncTime(resourceType: string): void {
+  const db = getDb();
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  db.prepare(`
+    INSERT INTO hub_sync_metadata (resource_type, last_synced_at)
+    VALUES (?, ?)
+    ON CONFLICT(resource_type) DO UPDATE SET last_synced_at = excluded.last_synced_at
+  `).run(resourceType, now);
+}
+
+// ==========================================
 // Graceful Shutdown
 // ==========================================
 
@@ -503,6 +757,100 @@ export function closeDb(): void {
     }
     db = null;
   }
+}
+
+// ========================
+// Conversations
+// ========================
+
+export interface Conversation {
+  id: string;
+  session_id: string;
+  name: string;
+  description: string;
+  content: string;
+  tags: string[];
+  raw_messages?: string | null; // JSON string of original messages
+  source?: string; // 'local' or 'hub'
+  created_at: string;
+  updated_at: string;
+}
+
+interface ConversationRow {
+  id: string;
+  session_id: string;
+  name: string;
+  description: string;
+  content: string;
+  tags: string;
+  raw_messages?: string | null;
+  source?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export function getConversations(): Conversation[] {
+  const db = getDb();
+  const rows = db.prepare('SELECT * FROM conversations ORDER BY updated_at DESC').all() as ConversationRow[];
+  return rows.map(row => ({
+    ...row,
+    tags: JSON.parse(row.tags),
+  }));
+}
+
+export function getConversation(id: string): Conversation | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as ConversationRow | undefined;
+  if (!row) return null;
+  return {
+    ...row,
+    tags: JSON.parse(row.tags),
+  };
+}
+
+export function getConversationBySessionId(sessionId: string): Conversation | null {
+  const db = getDb();
+  const row = db.prepare('SELECT * FROM conversations WHERE session_id = ?').get(sessionId) as ConversationRow | undefined;
+  if (!row) return null;
+  return {
+    ...row,
+    tags: JSON.parse(row.tags),
+  };
+}
+
+export function createOrUpdateConversation(conv: Omit<Conversation, 'created_at' | 'updated_at'>): Conversation {
+  const db = getDb();
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  const tagsJson = JSON.stringify(conv.tags);
+  const rawMessages = conv.raw_messages || null;
+  const source = conv.source || 'local';
+
+  // Check if conversation exists for this session
+  const existing = getConversationBySessionId(conv.session_id);
+
+  if (existing) {
+    // Update existing (覆盖)
+    db.prepare(`
+      UPDATE conversations
+      SET name = ?, description = ?, content = ?, tags = ?, raw_messages = ?, source = ?, updated_at = ?
+      WHERE session_id = ?
+    `).run(conv.name, conv.description, conv.content, tagsJson, rawMessages, source, now, conv.session_id);
+
+    return getConversation(existing.id)!;
+  } else {
+    // Create new
+    db.prepare(`
+      INSERT INTO conversations (id, session_id, name, description, content, tags, raw_messages, source, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(conv.id, conv.session_id, conv.name, conv.description, conv.content, tagsJson, rawMessages, source, now, now);
+
+    return getConversation(conv.id)!;
+  }
+}
+
+export function deleteConversation(id: string): void {
+  const db = getDb();
+  db.prepare('DELETE FROM conversations WHERE id = ?').run(id);
 }
 
 // Register shutdown handlers to close the database when the process exits.

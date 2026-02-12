@@ -153,6 +153,37 @@
     background: oklch(0.5 0 0 / 50%);
   }
 
+  /* 🔧 Streamdown 代码块主题适配 - light 模式白底，dark 模式黑底 */
+  [data-streamdown="code-block"] {
+    @apply border-border;
+  }
+
+  /* Light 模式 - 白底黑字 */
+  :root [data-streamdown="code-block-body"] pre {
+    background-color: #f6f8fa !important;
+    color: #24292f !important;
+  }
+  :root [data-streamdown="code-block-body"] code {
+    background-color: #f6f8fa !important;
+  }
+  :root [data-streamdown="code-block-header"] {
+    background-color: #f0f0f0 !important;
+    color: #666 !important;
+  }
+
+  /* Dark 模式 - 黑底白字 */
+  .dark [data-streamdown="code-block-body"] pre {
+    background-color: #0d1117 !important;
+    color: #c9d1d9 !important;
+  }
+  .dark [data-streamdown="code-block-body"] code {
+    background-color: #0d1117 !important;
+  }
+  .dark [data-streamdown="code-block-header"] {
+    background-color: #161b22 !important;
+    color: #8b949e !important;
+  }
+
   /* Prose (markdown) refinements */
   .prose {
     --tw-prose-headings: var(--foreground);

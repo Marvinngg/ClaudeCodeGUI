@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Message, SSEEvent, SessionResponse, TokenUsage, PermissionRequestEvent } from '@/types';
 import { MessageList } from '@/components/chat/MessageList';
@@ -20,16 +20,32 @@ interface ToolResultInfo {
 
 export default function NewChatPage() {
   const router = useRouter();
-  const { setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId } = usePanel();
+  const { setPanelOpen, setPendingApprovalSessionId, setWorkingDirectory: setGlobalWorkingDirectory } = usePanel();
   const [messages, setMessages] = useState<Message[]>([]);
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [toolUses, setToolUses] = useState<ToolUseInfo[]>([]);
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>([]);
   const [statusText, setStatusText] = useState<string | undefined>();
-  const [workingDir, setWorkingDir] = useState('');
+  const [workingDir, setWorkingDir] = useState(''); // 🔧 本地状态，默认为空
+
+  // 🔧 初始化：默认使用 Default 模型（空字符串），不读取 localStorage
+  // 用户明确要求：新建对话时保持干净状态
+  useEffect(() => {
+    // No-op
+  }, []);
+
+  // 🔧 模型变更时不保存到 localStorage，确保每次新建都是 Default
+  const handleModelChange = useCallback((model: string) => {
+    setCurrentModel(model);
+  }, []);
+
+  // 🔧 新对话页面：重置全局工作目录为空，不继承上一次对话
+  useEffect(() => {
+    setGlobalWorkingDirectory('');
+  }, [setGlobalWorkingDirectory]);
   const [mode, setMode] = useState('code');
-  const [currentModel, setCurrentModel] = useState('sonnet');
+  const [currentModel, setCurrentModel] = useState('');
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
@@ -37,9 +53,9 @@ export default function NewChatPage() {
 
   const handleWorkingDirectoryChange = useCallback((dir: string) => {
     setWorkingDir(dir);
-    setWorkingDirectory(dir);
+    setGlobalWorkingDirectory(dir); // 🔧 同步到全局，让 RightPanel 跟随
     setPanelOpen(true);
-  }, [setWorkingDirectory, setPanelOpen]);
+  }, [setPanelOpen, setGlobalWorkingDirectory]);
 
   const stopStreaming = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -134,12 +150,38 @@ export default function NewChatPage() {
         setMessages([userMessage]);
 
         // Send the message via streaming API
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: session.id, content, mode, model: currentModel }),
-          signal: controller.signal,
-        });
+        let response: Response;
+        console.log(`[page] sendFirstMessage mode=${mode}, sessionId=${session.id}`);
+        if (mode === 'teams') {
+          // Teams 模式：使用持久 CLI 进程 API
+          const params = new URLSearchParams({
+            session_id: session.id,
+            message: content,
+          });
+          // 只有用户实际选择了工作目录才传递，否则让服务端决定默认值
+          if (workingDir.trim()) {
+            params.set('working_directory', workingDir.trim());
+          }
+          console.log(`[page] Using teams API: /api/teams/ws`);
+          response = await fetch(`/api/teams/ws?${params.toString()}`, {
+            method: 'GET',
+            signal: controller.signal,
+          });
+        } else {
+          console.log(`[page] Using standard API: /api/chat`);
+          response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              session_id: session.id,
+              content,
+              mode,
+              model: currentModel,
+              working_directory: workingDir.trim() || undefined // 🔧 关键修复：传递工作目录，否则 SDK 无法加载项目 skills
+            }),
+            signal: controller.signal,
+          });
+        }
 
         if (!response.ok) {
           const err = await response.json();
@@ -314,7 +356,7 @@ export default function NewChatPage() {
           id: 'cmd-' + Date.now(),
           session_id: '',
           role: 'assistant',
-          content: `## Available Commands\n\n- **/help** - Show this help message\n- **/clear** - Clear conversation history\n- **/compact** - Compress conversation context\n- **/cost** - Show token usage statistics\n- **/doctor** - Check system health\n- **/init** - Initialize CLAUDE.md\n- **/review** - Start code review\n- **/terminal-setup** - Configure terminal\n\n**Tips:**\n- Type \`@\` to mention files\n- Use Shift+Enter for new line\n- Select a project folder to enable file operations`,
+          content: `## Available Commands\n\n### App Commands\n- **/help** — Show this help\n- **/clear** — Clear conversation history\n\n### SDK Commands\n_(send a message first to load available commands)_\n\n**Tips:**\n- Type \`/\` to browse all commands and skills\n- Type \`@\` to mention files\n- Commands from \`~/.claude/skills/\`, \`~/.claude/commands/\` and project \`.claude/\` are auto-loaded\n- Select a project folder to see project-level commands`,
           created_at: new Date().toISOString(),
           token_usage: null,
         };
@@ -362,7 +404,7 @@ export default function NewChatPage() {
         disabled={false}
         isStreaming={isStreaming}
         modelName={currentModel}
-        onModelChange={setCurrentModel}
+        onModelChange={handleModelChange}
         workingDirectory={workingDir}
         onWorkingDirectoryChange={handleWorkingDirectoryChange}
         mode={mode}

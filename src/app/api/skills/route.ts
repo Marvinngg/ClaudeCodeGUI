@@ -2,19 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import crypto from "crypto";
 
 interface SkillFile {
   name: string;
   description: string;
   content: string;
-  source: "global" | "project" | "plugin" | "installed";
-  installedSource?: "agents" | "claude";
+  source: "global" | "project" | "plugin";
   filePath: string;
 }
-
-type InstalledSource = "agents" | "claude";
-type InstalledSkill = SkillFile & { installedSource: InstalledSource; contentHash: string };
 
 function getGlobalCommandsDir(): string {
   return path.join(os.homedir(), ".claude", "commands");
@@ -24,41 +19,8 @@ function getProjectCommandsDir(cwd?: string): string {
   return path.join(cwd || process.cwd(), ".claude", "commands");
 }
 
-function getPluginCommandsDirs(): string[] {
-  const dirs: string[] = [];
-  const marketplacesDir = path.join(os.homedir(), ".claude", "plugins", "marketplaces");
-  if (!fs.existsSync(marketplacesDir)) return dirs;
-
-  try {
-    // Scan marketplaces -> each marketplace -> plugins -> each plugin -> commands
-    const marketplaces = fs.readdirSync(marketplacesDir);
-    for (const marketplace of marketplaces) {
-      const pluginsDir = path.join(marketplacesDir, marketplace, "plugins");
-      if (!fs.existsSync(pluginsDir)) continue;
-      const plugins = fs.readdirSync(pluginsDir);
-      for (const plugin of plugins) {
-        const commandsDir = path.join(pluginsDir, plugin, "commands");
-        if (fs.existsSync(commandsDir)) {
-          dirs.push(commandsDir);
-        }
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return dirs;
-}
-
-function getInstalledSkillsDir(): string {
-  return path.join(os.homedir(), ".agents", "skills");
-}
-
 function getClaudeSkillsDir(): string {
   return path.join(os.homedir(), ".claude", "skills");
-}
-
-function computeContentHash(content: string): string {
-  return crypto.createHash("sha1").update(content, "utf8").digest("hex");
 }
 
 /**
@@ -110,15 +72,15 @@ function parseSkillFrontMatter(content: string): { name?: string; description?: 
 }
 
 /**
- * Scan a directory for installed skills.
+ * Scan a directory for skills in SKILL.md format (new format).
  * Each skill is a subdirectory containing a SKILL.md with YAML front matter.
- * Used for both ~/.agents/skills/ and ~/.claude/skills/.
+ * Used for ~/.claude/skills/ and .claude/skills/
  */
-function scanInstalledSkills(
+function scanSkillsDirectory(
   dir: string,
-  installedSource: InstalledSource
-): InstalledSkill[] {
-  const skills: InstalledSkill[] = [];
+  source: "global" | "project"
+): SkillFile[] {
+  const skills: SkillFile[] = [];
   if (!fs.existsSync(dir)) return skills;
 
   try {
@@ -131,16 +93,13 @@ function scanInstalledSkills(
       const content = fs.readFileSync(skillMdPath, "utf-8");
       const meta = parseSkillFrontMatter(content);
       const name = meta.name || entry.name;
-      const description = meta.description || `Installed skill: /${name}`;
-      const contentHash = computeContentHash(content);
+      const description = meta.description || `Skill: /${name}`;
 
       skills.push({
         name,
         description,
         content,
-        source: "installed",
-        installedSource,
-        contentHash,
+        source,
         filePath: skillMdPath,
       });
     }
@@ -150,46 +109,13 @@ function scanInstalledSkills(
   return skills;
 }
 
-function resolveInstalledSkills(
-  agentsSkills: InstalledSkill[],
-  claudeSkills: InstalledSkill[],
-  preferredSource: InstalledSource
-): SkillFile[] {
-  const all = [...agentsSkills, ...claudeSkills];
-  const byName = new Map<string, InstalledSkill[]>();
-  for (const skill of all) {
-    const existing = byName.get(skill.name);
-    if (existing) {
-      existing.push(skill);
-    } else {
-      byName.set(skill.name, [skill]);
-    }
-  }
-
-  const resolved: InstalledSkill[] = [];
-  for (const group of byName.values()) {
-    if (group.length === 1) {
-      resolved.push(group[0]);
-      continue;
-    }
-
-    const uniqueHashes = new Set(group.map((s) => s.contentHash));
-    if (uniqueHashes.size === 1) {
-      const preferred =
-        group.find((s) => s.installedSource === preferredSource) || group[0];
-      resolved.push(preferred);
-      continue;
-    }
-
-    resolved.push(...group);
-  }
-
-  return resolved.map(({ contentHash: _contentHash, ...rest }) => rest);
-}
-
-function scanDirectory(
+/**
+ * Scan a directory for commands in .md format (old format).
+ * Used for ~/.claude/commands/ and .claude/commands/
+ */
+function scanCommandsDirectory(
   dir: string,
-  source: "global" | "project" | "plugin",
+  source: "global" | "project",
   prefix = ""
 ): SkillFile[] {
   const skills: SkillFile[] = [];
@@ -205,7 +131,7 @@ function scanDirectory(
       if (entry.isDirectory()) {
         // Recurse into subdirectories (e.g. ~/.claude/commands/review/pr.md)
         const subPrefix = prefix ? `${prefix}:${entry.name}` : entry.name;
-        skills.push(...scanDirectory(fullPath, source, subPrefix));
+        skills.push(...scanCommandsDirectory(fullPath, source, subPrefix));
         continue;
       }
 
@@ -230,45 +156,40 @@ export async function GET(request: NextRequest) {
   try {
     // Accept optional cwd query param for project-level skills
     const cwd = request.nextUrl.searchParams.get("cwd") || undefined;
-    const globalDir = getGlobalCommandsDir();
-    const projectDir = getProjectCommandsDir(cwd);
 
-    console.log(`[skills] Scanning global: ${globalDir} (exists: ${fs.existsSync(globalDir)})`);
-    console.log(`[skills] Scanning project: ${projectDir} (exists: ${fs.existsSync(projectDir)})`);
-    console.log(`[skills] HOME=${process.env.HOME}, homedir=${os.homedir()}`);
+    // ✅ 只扫描 Claude Code CLI 原生支持的目录
+    // CLI 支持 4 种 skills 来源：
+    // 1. ~/.claude/commands/*.md (global, 旧格式)
+    // 2. ~/.claude/skills/{name}/SKILL.md (global, 新格式)
+    // 3. .claude/commands/*.md (project, 旧格式)
+    // 4. .claude/skills/{name}/SKILL.md (project, 新格式)
 
-    const globalSkills = scanDirectory(globalDir, "global");
-    const projectSkills = scanDirectory(projectDir, "project");
+    const globalCommandsDir = getGlobalCommandsDir();    // ~/.claude/commands/
+    const globalSkillsDir = getClaudeSkillsDir();        // ~/.claude/skills/
+    const projectCommandsDir = getProjectCommandsDir(cwd); // .claude/commands/
+    const projectSkillsDir = path.join(cwd || process.cwd(), ".claude", "skills"); // .claude/skills/
 
-    const agentsSkillsDir = getInstalledSkillsDir();
-    const claudeSkillsDir = getClaudeSkillsDir();
-    console.log(`[skills] Scanning installed: ${agentsSkillsDir} (exists: ${fs.existsSync(agentsSkillsDir)})`);
-    console.log(`[skills] Scanning installed: ${claudeSkillsDir} (exists: ${fs.existsSync(claudeSkillsDir)})`);
-    const agentsSkills = scanInstalledSkills(agentsSkillsDir, "agents");
-    const claudeSkills = scanInstalledSkills(claudeSkillsDir, "claude");
-    const preferredInstalledSource: InstalledSource =
-      agentsSkills.length === claudeSkills.length
-        ? "claude"
-        : agentsSkills.length > claudeSkills.length
-          ? "agents"
-          : "claude";
-    console.log(
-      `[skills] Installed counts: agents=${agentsSkills.length}, claude=${claudeSkills.length}, preferred=${preferredInstalledSource}`
-    );
-    const installedSkills = resolveInstalledSkills(
-      agentsSkills,
-      claudeSkills,
-      preferredInstalledSource
-    );
+    console.log(`[skills] Scanning global commands: ${globalCommandsDir} (exists: ${fs.existsSync(globalCommandsDir)})`);
+    console.log(`[skills] Scanning global skills: ${globalSkillsDir} (exists: ${fs.existsSync(globalSkillsDir)})`);
+    console.log(`[skills] Scanning project commands: ${projectCommandsDir} (exists: ${fs.existsSync(projectCommandsDir)})`);
+    console.log(`[skills] Scanning project skills: ${projectSkillsDir} (exists: ${fs.existsSync(projectSkillsDir)})`);
 
-    // Scan installed plugin skills
-    const pluginSkills: SkillFile[] = [];
-    for (const dir of getPluginCommandsDirs()) {
-      pluginSkills.push(...scanDirectory(dir, "plugin"));
-    }
+    // 扫描旧格式 commands（.md 文件）
+    const globalCommands = scanCommandsDirectory(globalCommandsDir, "global");
+    const projectCommands = scanCommandsDirectory(projectCommandsDir, "project");
 
-    const all = [...globalSkills, ...projectSkills, ...installedSkills, ...pluginSkills];
-    console.log(`[skills] Found: global=${globalSkills.length}, project=${projectSkills.length}, installed=${installedSkills.length}, plugin=${pluginSkills.length}`);
+    // 扫描新格式 skills（{name}/SKILL.md）
+    const globalSkills = scanSkillsDirectory(globalSkillsDir, "global");
+    const projectSkills = scanSkillsDirectory(projectSkillsDir, "project");
+
+    const all = [
+      ...globalCommands,
+      ...globalSkills,
+      ...projectCommands,
+      ...projectSkills,
+    ];
+
+    console.log(`[skills] Found: global commands=${globalCommands.length}, global skills=${globalSkills.length}, project commands=${projectCommands.length}, project skills=${projectSkills.length}`);
 
     return NextResponse.json({ skills: all });
   } catch (error) {
@@ -280,13 +201,45 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/**
+ * Validate SKILL.md format (YAML front matter + content)
+ */
+function validateSkillFormat(content: string): { valid: boolean; error?: string } {
+  // Must have YAML front matter
+  const fmMatch = content.match(/^---\r?\n([\s\S]+?)\r?\n---/);
+  if (!fmMatch) {
+    return { valid: false, error: "Missing YAML front matter. Skill must start with ---\\nname: ...\\ndescription: ...\\n---" };
+  }
+
+  const meta = parseSkillFrontMatter(content);
+  if (!meta.name) {
+    return { valid: false, error: "Missing 'name' field in YAML front matter" };
+  }
+  if (!meta.description) {
+    return { valid: false, error: "Missing 'description' field in YAML front matter" };
+  }
+
+  // ✅ 关键修复：必须有 prompt 内容（YAML 后面不能只有空白）
+  // 提取 YAML 后面的内容
+  const afterYaml = content.slice(fmMatch[0].length).trim();
+  if (!afterYaml) {
+    return {
+      valid: false,
+      error: "Skill must have prompt content after YAML front matter. Skills without prompt content will not be visible to the model."
+    };
+  }
+
+  return { valid: true };
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { name, content, scope } = body as {
+    const { name, content, scope, cwd } = body as {
       name: string;
       content: string;
       scope: "global" | "project";
+      cwd?: string;
     };
 
     if (!name || typeof name !== "string") {
@@ -305,36 +258,56 @@ export async function POST(request: Request) {
       );
     }
 
-    const dir =
-      scope === "project" ? getProjectCommandsDir() : getGlobalCommandsDir();
+    // ✅ 创建新格式 skills：{name}/SKILL.md（而不是旧格式的 {name}.md）
+    const baseDir = scope === "project"
+      ? path.join(cwd || process.cwd(), ".claude", "skills")
+      : path.join(os.homedir(), ".claude", "skills");
 
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    const skillDir = path.join(baseDir, safeName);
+    const skillFilePath = path.join(skillDir, "SKILL.md");
 
-    const filePath = path.join(dir, `${safeName}.md`);
-    if (fs.existsSync(filePath)) {
+    if (fs.existsSync(skillFilePath)) {
       return NextResponse.json(
         { error: "A skill with this name already exists" },
         { status: 409 }
       );
     }
 
-    fs.writeFileSync(filePath, content || "", "utf-8");
+    // 创建 skill 目录
+    fs.mkdirSync(skillDir, { recursive: true });
 
+    // 生成带 YAML Front Matter 的内容
     const firstLine = (content || "").split("\n")[0]?.trim() || "";
     const description = firstLine.startsWith("#")
       ? firstLine.replace(/^#+\s*/, "")
       : firstLine || `Skill: /${safeName}`;
+
+    const skillContent = `---
+name: ${safeName}
+description: ${description}
+---
+
+${content || ""}`;
+
+    // ✅ 验证生成的内容格式
+    const validation = validateSkillFormat(skillContent);
+    if (!validation.valid) {
+      return NextResponse.json(
+        { error: validation.error },
+        { status: 400 }
+      );
+    }
+
+    fs.writeFileSync(skillFilePath, skillContent, "utf-8");
 
     return NextResponse.json(
       {
         skill: {
           name: safeName,
           description,
-          content: content || "",
+          content: skillContent,
           source: scope || "global",
-          filePath,
+          filePath: skillFilePath,
         },
       },
       { status: 201 }

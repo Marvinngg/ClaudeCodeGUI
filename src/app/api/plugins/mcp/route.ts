@@ -72,9 +72,24 @@ export async function POST(
     const body = await request.json();
     const { name, server } = body as { name: string; server: MCPServerConfig };
 
-    if (!name || !server || !server.command) {
+    if (!name || !server) {
       return NextResponse.json(
-        { error: 'Name and server command are required' },
+        { error: 'Name and server config are required' },
+        { status: 400 }
+      );
+    }
+
+    // 根据传输类型验证必需字段
+    const transport = server.type || 'stdio';
+    if (transport === 'stdio' && !server.command) {
+      return NextResponse.json(
+        { error: 'stdio servers require a command' },
+        { status: 400 }
+      );
+    }
+    if ((transport === 'sse' || transport === 'http') && !server.url) {
+      return NextResponse.json(
+        { error: `${transport} servers require a url` },
         { status: 400 }
       );
     }

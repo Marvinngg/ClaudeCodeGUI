@@ -24,6 +24,12 @@ interface ToolResultInfo {
   is_error?: boolean;
 }
 
+export interface TeamNotification {
+  task_id: string;
+  status: string;
+  summary: string;
+}
+
 interface MessageListProps {
   messages: Message[];
   streamingContent: string;
@@ -35,6 +41,7 @@ interface MessageListProps {
   pendingPermission?: PermissionRequestEvent | null;
   onPermissionResponse?: (decision: 'allow' | 'allow_session' | 'deny') => void;
   permissionResolved?: 'allow' | 'deny' | null;
+  teamNotifications?: TeamNotification[];
 }
 
 export function MessageList({
@@ -48,6 +55,7 @@ export function MessageList({
   pendingPermission,
   onPermissionResponse,
   permissionResolved,
+  teamNotifications,
 }: MessageListProps) {
   if (messages.length === 0 && !isStreaming) {
     return (
@@ -83,6 +91,7 @@ export function MessageList({
             pendingPermission={pendingPermission}
             onPermissionResponse={onPermissionResponse}
             permissionResolved={permissionResolved}
+            teamNotifications={teamNotifications}
           />
         )}
       </ConversationContent>

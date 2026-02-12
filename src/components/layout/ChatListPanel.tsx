@@ -67,6 +67,7 @@ const MODE_BADGE_CONFIG = {
   code: { label: "Code", className: "bg-blue-500/10 text-blue-500" },
   plan: { label: "Plan", className: "bg-purple-500/10 text-purple-500" },
   ask: { label: "Ask", className: "bg-green-500/10 text-green-500" },
+  teams: { label: "Teams", className: "bg-orange-500/10 text-orange-500" },
 } as const;
 
 export function ChatListPanel({ open }: ChatListPanelProps) {

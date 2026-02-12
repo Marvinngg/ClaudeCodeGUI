@@ -25,6 +25,7 @@ import {
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import type { ToolUIPart } from 'ai';
 import type { PermissionRequestEvent } from '@/types';
+import type { TeamNotification } from './MessageList';
 
 interface ToolUseInfo {
   id: string;
@@ -48,6 +49,7 @@ interface StreamingMessageProps {
   pendingPermission?: PermissionRequestEvent | null;
   onPermissionResponse?: (decision: 'allow' | 'allow_session' | 'deny') => void;
   permissionResolved?: 'allow' | 'deny' | null;
+  teamNotifications?: TeamNotification[];
 }
 
 function getToolState(hasResult: boolean, isError?: boolean): ToolUIPart['state'] {
@@ -91,6 +93,15 @@ function StreamingStatusBar({ statusText }: { statusText?: string }) {
   );
 }
 
+function getNotificationColor(status: string): string {
+  switch (status) {
+    case 'completed': return 'bg-green-500/10 border-green-500/30 text-green-400';
+    case 'failed': return 'bg-red-500/10 border-red-500/30 text-red-400';
+    case 'stopped': return 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400';
+    default: return 'bg-orange-500/10 border-orange-500/30 text-orange-400';
+  }
+}
+
 export function StreamingMessage({
   content,
   isStreaming,
@@ -101,6 +112,7 @@ export function StreamingMessage({
   pendingPermission,
   onPermissionResponse,
   permissionResolved,
+  teamNotifications = [],
 }: StreamingMessageProps) {
   const runningTools = toolUses.filter(
     (tool) => !toolResults.some((r) => r.tool_use_id === tool.id)
@@ -177,6 +189,20 @@ export function StreamingMessage({
                 </Tool>
               );
             })}
+          </div>
+        )}
+
+        {/* Team notifications */}
+        {teamNotifications.length > 0 && (
+          <div className="space-y-1 w-full">
+            {teamNotifications.map((notif, i) => (
+              <div
+                key={`${notif.task_id}-${i}`}
+                className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs ${getNotificationColor(notif.status)}`}
+              >
+                <span className="font-medium">{notif.summary}</span>
+              </div>
+            ))}
           </div>
         )}
 

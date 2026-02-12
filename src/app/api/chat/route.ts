@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
 import { addMessage, getSession, updateSessionTitle, updateSdkSessionId, getSetting } from '@/lib/db';
+import { hubClient } from '@/lib/hub-client';
 import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment } from '@/types';
 
 export const runtime = 'nodejs';
@@ -8,8 +9,8 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
-    const body: SendMessageRequest & { files?: FileAttachment[] } = await request.json();
-    const { session_id, content, model, mode, files } = body;
+    const body: SendMessageRequest & { files?: FileAttachment[]; working_directory?: string } = await request.json();
+    const { session_id, content, model, mode, files, working_directory } = body;
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -38,18 +39,25 @@ export async function POST(request: NextRequest) {
     // Determine model: request override > session model > default setting
     const effectiveModel = model || session.model || getSetting('default_model') || undefined;
 
-    // Determine permission mode from chat mode: code → acceptEdits, plan → plan, ask → default (no tools)
+    // Determine permission mode from chat mode: code → acceptEdits, plan → plan, ask → default (no tools), teams → acceptEdits + Agent Teams
     const effectiveMode = mode || session.mode || 'code';
     let permissionMode: string;
     let systemPromptOverride: string | undefined;
+    let enableAgentTeams = false;
     switch (effectiveMode) {
       case 'plan':
         permissionMode = 'plan';
         break;
       case 'ask':
-        permissionMode = 'default';
-        systemPromptOverride = (session.system_prompt || '') +
-          '\n\nYou are in Ask mode. Answer questions and provide information only. Do not use any tools, do not read or write files, do not execute commands. Only respond with text.';
+        permissionMode = 'default'; // 🔧 只用 permissionMode 禁用工具，不添加 prompt
+        break;
+      case 'teams':
+        // Teams mode: enable Agent Teams experimental feature
+        // Use bypassPermissions so subagents can execute freely without
+        // hitting concurrent permission bottlenecks (our UI can only handle
+        // one permission request at a time, but teams spawn many subagents)
+        permissionMode = 'bypassPermissions';
+        enableAgentTeams = true;
         break;
       default: // 'code'
         permissionMode = 'acceptEdits';
@@ -81,10 +89,11 @@ export async function POST(request: NextRequest) {
       sdkSessionId: session.sdk_session_id || undefined,
       model: effectiveModel,
       systemPrompt: systemPromptOverride || session.system_prompt || undefined,
-      workingDirectory: session.working_directory || undefined,
+      workingDirectory: working_directory || session.working_directory || undefined, // 🔧 优先使用请求中的工作目录
       abortController,
       permissionMode,
       files: fileAttachments,
+      enableAgentTeams,
     });
 
     // Tee the stream: one for client, one for collecting the response
@@ -125,8 +134,9 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
         if (line.startsWith('data: ')) {
           try {
             const event: SSEEvent = JSON.parse(line.slice(6));
-            if (event.type === 'permission_request' || event.type === 'tool_output') {
-              // Skip permission_request and tool_output events - not saved as message content
+            if (event.type === 'permission_request' || event.type === 'tool_output'
+                || event.type === 'task_notification' || event.type === 'tool_use_summary') {
+              // Skip transient events - not saved as message content
             } else if (event.type === 'text') {
               currentText += event.data;
             } else if (event.type === 'tool_use') {
@@ -177,6 +187,17 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
                 // Also capture session_id from result if we missed it from init
                 if (resultData.session_id) {
                   updateSdkSessionId(sessionId, resultData.session_id);
+                }
+                // Report usage to Hub (non-blocking, fire-and-forget)
+                if (tokenUsage) {
+                  hubClient.reportUsage({
+                    userId: hubClient.getUserId(),
+                    sessionId,
+                    model: resultData.model || '',
+                    inputTokens: tokenUsage.input_tokens || 0,
+                    outputTokens: tokenUsage.output_tokens || 0,
+                    costUsd: tokenUsage.cost_usd || 0,
+                  }).catch(() => { /* silent */ });
                 }
               } catch {
                 // skip malformed result data

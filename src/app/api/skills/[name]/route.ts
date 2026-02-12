@@ -2,39 +2,49 @@ import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import crypto from "crypto";
 
-function getGlobalCommandsDir(): string {
-  return path.join(os.homedir(), ".claude", "commands");
-}
+/**
+ * Find skill file in Claude Code native directories.
+ * Priority: project commands > global commands > project skills > global skills
+ */
+function findSkillFile(
+  name: string,
+  cwd?: string
+): { filePath: string; source: "global" | "project"; isSkillFormat: boolean } | null {
+  const projectCommandsDir = path.join(cwd || process.cwd(), ".claude", "commands");
+  const globalCommandsDir = path.join(os.homedir(), ".claude", "commands");
+  const projectSkillsDir = path.join(cwd || process.cwd(), ".claude", "skills");
+  const globalSkillsDir = path.join(os.homedir(), ".claude", "skills");
 
-function getProjectCommandsDir(): string {
-  return path.join(process.cwd(), ".claude", "commands");
-}
+  // 1. Check project commands (.md format)
+  const projectCommandPath = path.join(projectCommandsDir, `${name}.md`);
+  if (fs.existsSync(projectCommandPath)) {
+    return { filePath: projectCommandPath, source: "project", isSkillFormat: false };
+  }
 
-function getInstalledSkillsDir(): string {
-  return path.join(os.homedir(), ".agents", "skills");
-}
+  // 2. Check global commands (.md format)
+  const globalCommandPath = path.join(globalCommandsDir, `${name}.md`);
+  if (fs.existsSync(globalCommandPath)) {
+    return { filePath: globalCommandPath, source: "global", isSkillFormat: false };
+  }
 
-function getClaudeSkillsDir(): string {
-  return path.join(os.homedir(), ".claude", "skills");
-}
+  // 3. Check project skills (SKILL.md format)
+  const projectSkillPath = path.join(projectSkillsDir, name, "SKILL.md");
+  if (fs.existsSync(projectSkillPath)) {
+    return { filePath: projectSkillPath, source: "project", isSkillFormat: true };
+  }
 
-type InstalledSource = "agents" | "claude";
-type SkillSource = "global" | "project" | "installed";
-type SkillMatch = {
-  filePath: string;
-  source: SkillSource;
-  installedSource?: InstalledSource;
-};
+  // 4. Check global skills (SKILL.md format)
+  const globalSkillPath = path.join(globalSkillsDir, name, "SKILL.md");
+  if (fs.existsSync(globalSkillPath)) {
+    return { filePath: globalSkillPath, source: "global", isSkillFormat: true };
+  }
 
-function computeContentHash(content: string): string {
-  return crypto.createHash("sha1").update(content, "utf8").digest("hex");
+  return null;
 }
 
 /**
- * Parse YAML front matter from SKILL.md content.
- * Extracts `name` and `description` fields from the --- delimited block.
+ * Parse YAML front matter
  */
 function parseSkillFrontMatter(content: string): { name?: string; description?: string } {
   const fmMatch = content.match(/^---\r?\n([\s\S]+?)\r?\n---/);
@@ -76,170 +86,32 @@ function parseSkillFrontMatter(content: string): { name?: string; description?: 
   return result;
 }
 
-function countInstalledSkills(dir: string): number {
-  if (!fs.existsSync(dir)) return 0;
-  try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    let count = 0;
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-      const skillMdPath = path.join(dir, entry.name, "SKILL.md");
-      if (fs.existsSync(skillMdPath)) count += 1;
-    }
-    return count;
-  } catch {
-    return 0;
-  }
-}
-
-function getPreferredInstalledSource(): InstalledSource {
-  const agentsCount = countInstalledSkills(getInstalledSkillsDir());
-  const claudeCount = countInstalledSkills(getClaudeSkillsDir());
-  return agentsCount === claudeCount
-    ? "claude"
-    : agentsCount > claudeCount
-      ? "agents"
-      : "claude";
-}
-
-type InstalledMatch = {
-  filePath: string;
-  installedSource: InstalledSource;
-  contentHash: string;
-};
-
-function findInstalledSkillMatches(
-  name: string,
-  installedSource?: InstalledSource
-): InstalledMatch[] {
-  const matches: InstalledMatch[] = [];
-  const dirs: Array<{ dir: string; source: InstalledSource }> = [];
-  if (!installedSource || installedSource === "agents") {
-    dirs.push({ dir: getInstalledSkillsDir(), source: "agents" });
-  }
-  if (!installedSource || installedSource === "claude") {
-    dirs.push({ dir: getClaudeSkillsDir(), source: "claude" });
-  }
-
-  for (const { dir, source } of dirs) {
-    if (!fs.existsSync(dir)) continue;
-    try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-        const skillMdPath = path.join(dir, entry.name, "SKILL.md");
-        if (!fs.existsSync(skillMdPath)) continue;
-        const content = fs.readFileSync(skillMdPath, "utf-8");
-        const meta = parseSkillFrontMatter(content);
-        const skillName = meta.name || entry.name;
-        if (skillName !== name) continue;
-        matches.push({
-          filePath: skillMdPath,
-          installedSource: source,
-          contentHash: computeContentHash(content),
-        });
-      }
-    } catch {
-      // ignore read errors
-    }
-  }
-
-  return matches;
-}
-
-function findSkillFile(
-  name: string,
-  options?: { installedSource?: InstalledSource; installedOnly?: boolean }
-):
-  | SkillMatch
-  | { conflict: true; sources: InstalledSource[] }
-  | null {
-  const installedSource = options?.installedSource;
-
-  if (!options?.installedOnly) {
-    // Check project first, then global, then installed (~/.agents/skills/ and ~/.claude/skills/)
-    const projectPath = path.join(getProjectCommandsDir(), `${name}.md`);
-    if (fs.existsSync(projectPath)) {
-      return { filePath: projectPath, source: "project" };
-    }
-    const globalPath = path.join(getGlobalCommandsDir(), `${name}.md`);
-    if (fs.existsSync(globalPath)) {
-      return { filePath: globalPath, source: "global" };
-    }
-  }
-
-  const installedMatches = findInstalledSkillMatches(name, installedSource);
-  if (installedMatches.length === 1) {
-    const match = installedMatches[0];
-    return {
-      filePath: match.filePath,
-      source: "installed",
-      installedSource: match.installedSource,
-    };
-  }
-
-  if (installedMatches.length > 1) {
-    const uniqueHashes = new Set(installedMatches.map((m) => m.contentHash));
-    if (uniqueHashes.size === 1) {
-      const preferred = getPreferredInstalledSource();
-      const preferredMatch =
-        installedMatches.find((m) => m.installedSource === preferred) ||
-        installedMatches[0];
-      return {
-        filePath: preferredMatch.filePath,
-        source: "installed",
-        installedSource: preferredMatch.installedSource,
-      };
-    }
-
-    return {
-      conflict: true,
-      sources: Array.from(
-        new Set(installedMatches.map((m) => m.installedSource))
-      ),
-    };
-  }
-
-  return null;
-}
-
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ name: string }> }
 ) {
   try {
     const { name } = await params;
-    const url = new URL(_request.url);
-    const sourceParam = url.searchParams.get("source");
-    const installedSource =
-      sourceParam === "agents" || sourceParam === "claude"
-        ? (sourceParam as InstalledSource)
-        : undefined;
-    if (sourceParam && !installedSource) {
-      return NextResponse.json(
-        { error: "Invalid source; expected 'agents' or 'claude'" },
-        { status: 400 }
-      );
-    }
+    const url = new URL(request.url);
+    const cwd = url.searchParams.get("cwd") || undefined;
 
-    const found = installedSource
-      ? findSkillFile(name, { installedSource, installedOnly: true })
-      : findSkillFile(name);
-    if (found && "conflict" in found) {
-      return NextResponse.json(
-        { error: "Multiple skills with different content", sources: found.sources },
-        { status: 409 }
-      );
-    }
+    const found = findSkillFile(name, cwd);
     if (!found) {
       return NextResponse.json({ error: "Skill not found" }, { status: 404 });
     }
 
     const content = fs.readFileSync(found.filePath, "utf-8");
-    const firstLine = content.split("\n")[0]?.trim() || "";
-    const description = firstLine.startsWith("#")
-      ? firstLine.replace(/^#+\s*/, "")
-      : firstLine || `Skill: /${name}`;
+    let description = "";
+
+    if (found.isSkillFormat) {
+      const meta = parseSkillFrontMatter(content);
+      description = meta.description || `Skill: /${name}`;
+    } else {
+      const firstLine = content.split("\n")[0]?.trim() || "";
+      description = firstLine.startsWith("#")
+        ? firstLine.replace(/^#+\s*/, "")
+        : firstLine || `Skill: /${name}`;
+    }
 
     return NextResponse.json({
       skill: {
@@ -247,7 +119,6 @@ export async function GET(
         description,
         content,
         source: found.source,
-        installedSource: found.installedSource,
         filePath: found.filePath,
       },
     });
@@ -267,48 +138,73 @@ export async function PUT(
     const { name } = await params;
     const body = await request.json();
     const { content } = body as { content: string };
-
     const url = new URL(request.url);
-    const sourceParam = url.searchParams.get("source");
-    const installedSource =
-      sourceParam === "agents" || sourceParam === "claude"
-        ? (sourceParam as InstalledSource)
-        : undefined;
-    if (sourceParam && !installedSource) {
-      return NextResponse.json(
-        { error: "Invalid source; expected 'agents' or 'claude'" },
-        { status: 400 }
-      );
-    }
+    const cwd = url.searchParams.get("cwd") || undefined;
 
-    const found = installedSource
-      ? findSkillFile(name, { installedSource, installedOnly: true })
-      : findSkillFile(name);
-    if (found && "conflict" in found) {
-      return NextResponse.json(
-        { error: "Multiple skills with different content", sources: found.sources },
-        { status: 409 }
-      );
-    }
+    const found = findSkillFile(name, cwd);
     if (!found) {
       return NextResponse.json({ error: "Skill not found" }, { status: 404 });
     }
 
-    fs.writeFileSync(found.filePath, content ?? "", "utf-8");
+    // ✅ 检测是否需要重命名（YAML name 和目录名不一致）
+    let finalFilePath = found.filePath;
+    let finalName = name;
 
-    const firstLine = (content ?? "").split("\n")[0]?.trim() || "";
-    const description = firstLine.startsWith("#")
-      ? firstLine.replace(/^#+\s*/, "")
-      : firstLine || `Skill: /${name}`;
+    if (found.isSkillFormat) {
+      const meta = parseSkillFrontMatter(content);
+      const yamlName = meta.name;
+
+      if (yamlName && yamlName !== name) {
+        // ✅ 需要重命名 skill 目录
+        const skillDir = path.dirname(found.filePath);
+        const parentDir = path.dirname(skillDir);
+        const newSkillDir = path.join(parentDir, yamlName);
+        const newFilePath = path.join(newSkillDir, "SKILL.md");
+
+        // 检查新名称是否已存在
+        if (fs.existsSync(newSkillDir)) {
+          return NextResponse.json(
+            { error: `A skill named "${yamlName}" already exists` },
+            { status: 409 }
+          );
+        }
+
+        // 验证新名称格式
+        if (!/^[a-zA-Z0-9_-]+$/.test(yamlName)) {
+          return NextResponse.json(
+            { error: "Skill name can only contain letters, numbers, hyphens, and underscores" },
+            { status: 400 }
+          );
+        }
+
+        // 重命名目录
+        fs.renameSync(skillDir, newSkillDir);
+        finalFilePath = newFilePath;
+        finalName = yamlName;
+      }
+    }
+
+    // 保存内容
+    fs.writeFileSync(finalFilePath, content ?? "", "utf-8");
+
+    let description = "";
+    if (found.isSkillFormat) {
+      const meta = parseSkillFrontMatter(content);
+      description = meta.description || `Skill: /${finalName}`;
+    } else {
+      const firstLine = (content ?? "").split("\n")[0]?.trim() || "";
+      description = firstLine.startsWith("#")
+        ? firstLine.replace(/^#+\s*/, "")
+        : firstLine || `Skill: /${finalName}`;
+    }
 
     return NextResponse.json({
       skill: {
-        name,
+        name: finalName,
         description,
         content: content ?? "",
         source: found.source,
-        installedSource: found.installedSource,
-        filePath: found.filePath,
+        filePath: finalFilePath,
       },
     });
   } catch (error) {
@@ -320,38 +216,31 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ name: string }> }
 ) {
   try {
     const { name } = await params;
-    const url = new URL(_request.url);
-    const sourceParam = url.searchParams.get("source");
-    const installedSource =
-      sourceParam === "agents" || sourceParam === "claude"
-        ? (sourceParam as InstalledSource)
-        : undefined;
-    if (sourceParam && !installedSource) {
-      return NextResponse.json(
-        { error: "Invalid source; expected 'agents' or 'claude'" },
-        { status: 400 }
-      );
-    }
+    const url = new URL(request.url);
+    const cwd = url.searchParams.get("cwd") || undefined;
 
-    const found = installedSource
-      ? findSkillFile(name, { installedSource, installedOnly: true })
-      : findSkillFile(name);
-    if (found && "conflict" in found) {
-      return NextResponse.json(
-        { error: "Multiple skills with different content", sources: found.sources },
-        { status: 409 }
-      );
-    }
+    const found = findSkillFile(name, cwd);
     if (!found) {
       return NextResponse.json({ error: "Skill not found" }, { status: 404 });
     }
 
-    fs.unlinkSync(found.filePath);
+    // ✅ 删除逻辑：
+    // - 对于旧格式 (.md 文件)：直接删除文件
+    // - 对于新格式 (SKILL.md)：删除整个目录
+    if (found.isSkillFormat) {
+      // 删除整个 skill 目录 (例如 ~/.claude/skills/my-skill/)
+      const skillDir = path.dirname(found.filePath);
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    } else {
+      // 删除单个 .md 文件
+      fs.unlinkSync(found.filePath);
+    }
+
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json(

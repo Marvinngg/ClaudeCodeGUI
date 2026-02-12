@@ -4,6 +4,40 @@
 
 CodePilot — Claude Code 的原生桌面 GUI 客户端，基于 Electron + Next.js。
 
+## 核心原则（最高优先级）
+
+**CodePilot 是 Claude Code 的套壳 GUI，不是重新实现。** 以下原则必须严格遵守：
+
+1. **不越界**：所有功能必须通过 Claude Agent SDK 或 Claude Code CLI 实现，禁止自己重新实现 Claude Code 已有的功能（如 skills 加载、progressive disclosure、slash command 处理等）
+2. **先查文档**：遇到问题首先查阅 SDK 官方文档排查参数和逻辑，不要假设是 SDK 的 bug
+   - SDK 概览：https://platform.claude.com/docs/zh-CN/agent-sdk/overview
+   - Skills：https://platform.claude.com/docs/zh-CN/agent-sdk/skills
+   - Slash Commands：https://platform.claude.com/docs/zh-CN/agent-sdk/slash-commands
+   - TypeScript 参考：https://platform.claude.com/docs/zh-CN/agent-sdk/typescript
+3. **自纠错**：发现问题后要深入理解 Claude Code CLI 的底层机制，不要反复做表面修复
+4. **自测试**：有工具就自己测，不要把未验证的改动推给用户测试
+5. **还原原生体验**：目标是在 GUI 中还原 Claude Code CLI 的原生体验，不多不少
+
+## SDK 关键参数备忘
+
+以下是经过验证的 SDK 正确用法，修改前务必确认：
+
+```typescript
+const queryOptions: Options = {
+  cwd: workingDirectory,
+  // ⚠️ 必须设置！默认为 []，不设置则 skills、CLAUDE.md、slash commands 全部不生效
+  settingSources: ['user', 'project'],
+  // 使用 Claude Code 完整系统提示（包含 skills 元数据、工具说明等）
+  systemPrompt: { type: 'preset', preset: 'claude_code' },
+  permissionMode: 'acceptEdits',
+  includePartialMessages: true,
+};
+```
+
+- `settingSources: ['user', 'project']` — 加载 `~/.claude/` 下的全局设置和项目 `.claude/` 下的项目设置
+- `preset: 'claude_code'` — 加载 Claude Code 完整系统提示
+- `/slash-command` 直接作为 prompt 发给 SDK，SDK 会自动处理
+
 ## Release Checklist
 
 **发版前必须更新版本号：**

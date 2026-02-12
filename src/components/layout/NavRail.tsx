@@ -21,6 +21,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 interface NavRailProps {
   chatListOpen: boolean;
@@ -37,6 +38,7 @@ export function NavRail({ chatListOpen, onToggleChatList }: NavRailProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { theme, setTheme } = useTheme();
+  const { language, setLanguage, t } = useLanguage();
   const [mounted, setMounted] = useState(false);
   const isChatRoute = pathname === "/chat" || pathname.startsWith("/chat/");
 
@@ -57,11 +59,11 @@ export function NavRail({ chatListOpen, onToggleChatList }: NavRailProps) {
           >
             <Link href="/chat">
               <HugeiconsIcon icon={PlusSignIcon} className="h-4 w-4" />
-              <span className="sr-only">New Chat</span>
+              <span className="sr-only">{t('New Chat')}</span>
             </Link>
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="right">New Chat</TooltipContent>
+        <TooltipContent side="right">{t('New Chat')}</TooltipContent>
       </Tooltip>
 
       {/* Divider */}
@@ -99,7 +101,7 @@ export function NavRail({ chatListOpen, onToggleChatList }: NavRailProps) {
                     }}
                   >
                     <HugeiconsIcon icon={item.icon} className="h-4 w-4" />
-                    <span className="sr-only">{item.label}</span>
+                    <span className="sr-only">{t(item.label)}</span>
                   </Button>
                 ) : (
                   <Button
@@ -113,19 +115,42 @@ export function NavRail({ chatListOpen, onToggleChatList }: NavRailProps) {
                   >
                     <Link href={item.href}>
                       <HugeiconsIcon icon={item.icon} className="h-4 w-4" />
-                      <span className="sr-only">{item.label}</span>
+                      <span className="sr-only">{t(item.label)}</span>
                     </Link>
                   </Button>
                 )}
               </TooltipTrigger>
-              <TooltipContent side="right">{item.label}</TooltipContent>
+              <TooltipContent side="right">{t(item.label)}</TooltipContent>
             </Tooltip>
           );
         })}
       </nav>
 
-      {/* Bottom: theme toggle */}
+      {/* Bottom: theme toggle & language toggle */}
       <div className="mt-auto flex flex-col items-center gap-2">
+        {/* Language Toggle */}
+        {mounted && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setLanguage(language === 'zh' ? 'en' : 'zh')}
+                className="h-8 w-8"
+              >
+                <span className="text-xs font-semibold">
+                  {language === 'zh' ? '中' : 'EN'}
+                </span>
+                <span className="sr-only">{t('Switch Language')}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              {language === 'zh' ? 'English' : '中文'}
+            </TooltipContent>
+          </Tooltip>
+        )}
+
+        {/* Theme Toggle */}
         {mounted && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -140,11 +165,11 @@ export function NavRail({ chatListOpen, onToggleChatList }: NavRailProps) {
                 ) : (
                   <HugeiconsIcon icon={Moon02Icon} className="h-4 w-4" />
                 )}
-                <span className="sr-only">Toggle theme</span>
+                <span className="sr-only">{t('Toggle theme')}</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent side="right">
-              {theme === "dark" ? "Light mode" : "Dark mode"}
+              {theme === "dark" ? t('Light mode') : t('Dark mode')}
             </TooltipContent>
           </Tooltip>
         )}

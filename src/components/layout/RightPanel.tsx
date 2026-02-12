@@ -84,8 +84,18 @@ export function RightPanel() {
     );
   }
 
-  const handleFileSelect = (path: string) => {
-    setPreviewPath(path);
+  const handleFileSelect = async (path: string) => {
+    // 🔧 检查是否是文件（通过 API 验证），只有文件才预览
+    try {
+      const res = await fetch(`/api/files/preview?path=${encodeURIComponent(path)}&maxLines=200`);
+      if (res.ok) {
+        // 是文件，设置预览
+        setPreviewPath(path);
+      }
+      // 如果是文件夹或失败，不做任何操作（文件夹应该在 FileTree 组件内部展开/收起）
+    } catch {
+      // 静默失败，文件夹点击不应该有错误提示
+    }
   };
 
   const handleBackToTree = () => {
@@ -93,7 +103,7 @@ export function RightPanel() {
   };
 
   return (
-    <aside className="hidden h-full w-72 shrink-0 flex-col overflow-hidden bg-background lg:flex">
+    <aside className="hidden h-full w-full flex-col overflow-hidden bg-background lg:flex">
       {/* Header */}
       <div className="flex h-10 shrink-0 items-center justify-between px-4">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Chat Info</span>

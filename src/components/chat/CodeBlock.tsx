@@ -118,17 +118,13 @@ export function CodeBlock({
 
   const languageIconData = getLanguageIcon(language);
 
-  const theme = isTerminal ? vscDarkPlus : oneDark;
+  // 🔧 统一使用深色主题，无论什么语言都用黑底
+  const theme = vscDarkPlus;
 
   return (
-    <div className="relative group not-prose my-3 rounded-lg overflow-hidden border border-zinc-700/50">
+    <div className="relative group not-prose my-3 rounded-lg overflow-hidden border border-zinc-700/50 bg-[#1e1e1e]">
       {/* Header bar */}
-      <div className={cn(
-        "flex items-center justify-between px-4 py-1.5 text-xs",
-        isTerminal
-          ? "bg-zinc-950 text-zinc-400"
-          : "bg-zinc-800 dark:bg-zinc-900 text-zinc-400"
-      )}>
+      <div className="flex items-center justify-between px-4 py-1.5 text-xs bg-zinc-900 text-zinc-400">
         <div className="flex items-center gap-2 min-w-0">
           <HugeiconsIcon icon={languageIconData} className={cn(
             "h-3.5 w-3.5 shrink-0",
@@ -206,7 +202,7 @@ export function CodeBlock({
             fontSize: '0.8125rem',
             lineHeight: '1.5',
             padding: isTerminal ? '0.75rem 1rem' : '0.75rem 0.5rem',
-            background: isTerminal ? '#0a0a0a' : undefined,
+            background: '#1e1e1e', // 🔧 修复：所有代码块统一使用深色背景
             overflow: 'auto',
           }}
           wrapLines
@@ -216,12 +212,7 @@ export function CodeBlock({
 
         {/* Gradient overlay for collapsed state */}
         {isCollapsible && !expanded && (
-          <div className={cn(
-            "absolute bottom-0 left-0 right-0 h-16 pointer-events-none",
-            isTerminal
-              ? "bg-gradient-to-t from-[#0a0a0a] to-transparent"
-              : "bg-gradient-to-t from-[#282c34] to-transparent"
-          )} />
+          <div className="absolute bottom-0 left-0 right-0 h-16 pointer-events-none bg-gradient-to-t from-[#1e1e1e] to-transparent" />
         )}
       </div>
 
@@ -229,12 +220,7 @@ export function CodeBlock({
       {isCollapsible && (
         <button
           onClick={handleToggleExpand}
-          className={cn(
-            "flex w-full items-center justify-center gap-1.5 py-1.5 text-xs transition-colors",
-            isTerminal
-              ? "bg-zinc-950 text-zinc-400 hover:text-zinc-200"
-              : "bg-zinc-800 dark:bg-zinc-900 text-zinc-400 hover:text-zinc-200"
-          )}
+          className="flex w-full items-center justify-center gap-1.5 py-1.5 text-xs transition-colors bg-zinc-900 text-zinc-400 hover:text-zinc-200"
         >
           {expanded ? (
             <>

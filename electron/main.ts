@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, dialog, session, utilityProcess } from 'electron';
+import { app, BrowserWindow, nativeImage, dialog, session, utilityProcess, ipcMain } from 'electron';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import fs from 'fs';
@@ -283,6 +283,15 @@ function createWindow(port: number) {
     mainWindow = null;
   });
 }
+
+// ✅ 添加文件夹选择 IPC 处理
+ipcMain.handle('select-directory', async () => {
+  if (!mainWindow) return { canceled: true, filePaths: [] };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+  });
+  return result;
+});
 
 app.whenReady().then(async () => {
   // Load user's full shell environment (API keys, PATH, etc.)
