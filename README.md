@@ -69,6 +69,16 @@ CodePilot 内置了私域 Hub 支持，启动应用时会自动运行本地 Hub 
 ![Hub 配置](docs/screenshot-hub-settings.png)
 ![Hub 管理](docs/screenshot-hub-manager.png)
 
+### Hub 管理后台
+
+Hub 服务自带 Web 管理界面，管理员可通过浏览器直接管理 Skills 和对话数据（默认地址：`http://localhost:2999/admin`）。
+
+<!--
+【截图说明】
+8. screenshot-hub-admin.png : Hub 服务端 Web 管理界面
+-->
+![Hub 管理后台](docs/screenshot-hub-admin.png)
+
 ---
 
 ## 关键用法
@@ -81,22 +91,10 @@ CodePilot 支持三种对话模式：
 - **Plan** — 只分析和规划，不执行操作
 - **Ask** — 纯问答模式
 
-<!--
-【截图说明】
-4. screenshot-mode-selector.png : 输入框左侧的模式选择下拉菜单
--->
-![模式切换](docs/screenshot-mode-selector.png)
-
 ### Skills 管理
 
 - **本地 Skills**: 在 Extensions → Skills 中创建和管理，支持全局或项目级作用域
 - **Hub Skills**: 从 Hub 安装团队共享的 Skills，一键添加到本地
-
-<!--
-【截图说明】
-5. screenshot-skills.png : Extensions -> Skills 页面
--->
-![Skills 管理](docs/screenshot-skills.png)
 
 ### 对话总结与分享
 
